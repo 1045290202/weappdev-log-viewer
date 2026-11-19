@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="wad:package" content="log-viewer">
   <meta name="wad:name" content="日志查看器">
-  <meta name="wad:version" content="1.0.7">
-  <meta name="wad:versionCode" content="8">
+  <meta name="wad:version" content="1.0.8">
+  <meta name="wad:versionCode" content="9">
   <meta name="wad:author" content="WeAppDev Plugin">
   <meta name="wad:description" content="捕获小程序/小游戏逻辑层与渲染层 console、未捕获异常、页面路由、网络摘要与 Storage 写入；支持过滤、搜索、复制、导出，并内置可选的 vConsole 视图。">
   <style>
@@ -1365,7 +1365,7 @@
   (function () {
     'use strict';
 
-    var VERSION = '1.0.7';
+    var VERSION = '1.0.8';
     var CONSOLE_KEY = '__wadLogViewerConsole__';
     var WX_ERR_KEY = '__wadLogViewerErrors__';
     var OPT_KEY = 'options';
@@ -2078,7 +2078,7 @@
         } catch (e) {}
 
         g.__wadLVGen = ` + GEN + `;
-        g.__wadLVPatched = "1.0.7";
+        g.__wadLVPatched = "1.0.8";
         return "patched:" + consoleOk + "+" + engineOk;
       })()`;
     }
@@ -2121,7 +2121,10 @@
       if (!active || gameBridgeBusy) return;
       var dbg = safe(function () { return wadLogicLayer.debugger; }, null);
       if (!dbg) {
-        gameBridgeDone = true;
+        if (lastBridgeNotice !== 'nodbg') {
+          lastBridgeNotice = 'nodbg';
+          push('warn', 'session', 'host', '[lv] bridge error · debugger unavailable', {});
+        }
         return;
       }
       gameBridgeBusy = true;
@@ -2693,7 +2696,7 @@
   (function () {
     'use strict';
 
-    var VERSION = '1.0.7';
+    var VERSION = '1.0.8';
     var KEY = '__wadLogViewerRender__';
     var TOKEN = 'lvr-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
     var GEN = Date.now() * 1000 + Math.floor(Math.random() * 1000);
@@ -3072,7 +3075,7 @@
 
 如果客户端只支持远程 URL，用下面任意一个：
 
-- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.7/log-viewer.zip`
+- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.8/log-viewer.zip`
 - Raw zip：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.zip`
 - 单文件 HTML（无 vConsole）：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.html`
 
@@ -3105,6 +3108,7 @@ node verify.mjs  # Node mock 测试逻辑层/渲染层采集
 
 ## 版本
 
+1.0.8 — debugger 不存在时也自动输出 [lv] bridge error · debugger unavailable。
 1.0.7 — 自动把桥接成功/失败原因打到日志列表（[lv] bridge），并把 render 不可用提示改成可读文案。
 1.0.6 — 自动在每个 V8 上下文打一条 console 探针并在面板输出 captured / NOT-captured；面板打开时自动记录 render 的 webView/canvas 状态。
 1.0.5 — 增加 Cocos `cc.log` / Egret `egret.log` 引擎 logger 桥接，与 console 自动去重；探测增加 cc/egret 全局对象字段。
