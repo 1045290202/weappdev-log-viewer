@@ -23,7 +23,7 @@
 
 如果客户端只支持远程 URL，用下面任意一个：
 
-- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.2/log-viewer.zip`
+- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.3/log-viewer.zip`
 - Raw zip：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.zip`
 - 单文件 HTML（无 vConsole）：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.html`
 
@@ -56,6 +56,7 @@ node verify.mjs  # Node mock 测试逻辑层/渲染层采集
 
 ## 版本
 
+1.0.3 — 增加 console 自检、V8 上下文探测与 GameGlobal 小游戏 console 桥接，修复小游戏业务日志不在插件上下文时抓不到。
 1.0.2 — 增加逻辑层 hook 自愈与面板 3 秒轮询补拉，修复长时间运行后日志突然中断；面板过矮时整面板滚动。
 1.0.1 — 面板改为视口固定布局，修复浮窗/短面板内无法滚动；vConsole 改为 zip 资产按需加载。
 1.0.0 — 初版。

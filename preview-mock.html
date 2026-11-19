@@ -68,6 +68,26 @@
             pageApi: { route: 'pages/index/index' }
           });
         }
+        if (name === 'lv:selftest') {
+          return Promise.resolve({
+            marker: true, top: true, wrapped: true, installed: 8,
+            hasOwnLog: true, writable: true, configurable: true, accessor: false,
+            captured: true, seq: seq, error: ''
+          });
+        }
+        if (name === 'lv:probe') {
+          return Promise.resolve({
+            gameCtxId: 2, bridgeDone: false, attempts: 0, status: 'ctx WxaSub -> patched:8',
+            contexts: [
+              { id: 1, name: 'MainContext' },
+              { id: 2, name: 'WxaSub', isDefault: true }
+            ],
+            results: [
+              { id: 1, name: 'MainContext', isDefault: false, state: { gameGlobal: 'undefined', directWrapper: false, bridgeWrapper: false, writable: true } },
+              { id: 2, name: 'WxaSub', isDefault: true, state: { gameGlobal: 'object', directWrapper: false, bridgeWrapper: true, writable: true } }
+            ]
+          });
+        }
         if (name === 'lv:test') return Promise.resolve({ ok: true, seq: seq });
         return Promise.resolve({ ok: true });
       },

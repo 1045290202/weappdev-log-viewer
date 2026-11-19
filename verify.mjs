@@ -197,7 +197,7 @@ async function testLogic() {
 
   // 诊断
   const diag = registered.get('lv:diag')();
-  assert.equal(diag.version, '1.0.2', 'diag version');
+  assert.equal(diag.version, '1.0.3', 'diag version');
   assert.equal(diag.hooks.console, true, 'diag console hook');
   assert.equal(diag.hooks.error, true, 'diag error hook');
 
@@ -335,6 +335,94 @@ async function testRender() {
   console.log('render tests passed; forwarded', all.length, 'entries');
 }
 
+async function testGameBridge() {
+  const { consoleObj } = makeConsole();
+  const { layer, registered, handlers } = makeLogicLayer();
+  const { wx } = makeWx();
+  let patchExpr = '';
+  let servedGameLog = false;
+
+  layer.debugger = {
+    enable() { return Promise.resolve({ ok: true }); },
+    contexts() {
+      return Promise.resolve({ items: [
+        { id: 1, name: 'MainContext' },
+        { id: 2, name: 'WxaSub', isDefault: true }
+      ] });
+    },
+    evalGlobal(expr, byValue, ctxId) {
+      if (expr === 'typeof GameGlobal') {
+        return Promise.resolve({ value: ctxId === 2 ? 'object' : 'undefined' });
+      }
+      if (expr.indexOf('__wadLVPatched') >= 0 && expr.indexOf('methods') >= 0) {
+        patchExpr = expr;
+        return Promise.resolve({ value: 'patched:8' });
+      }
+      if (expr.indexOf('splice') >= 0) {
+        if (!servedGameLog) {
+          servedGameLog = true;
+          return Promise.resolve({ value: [
+            { level: 'log', at: Date.now(), text: 'game-hello', stack: '' }
+          ] });
+        }
+        return Promise.resolve({ value: [] });
+      }
+      return Promise.resolve({ value: {
+        gameGlobal: ctxId === 2 ? 'object' : 'undefined',
+        hasConsole: true,
+        logType: 'function',
+        directWrapper: false,
+        bridgeWrapper: ctxId === 2,
+        hasMarker: false,
+        writable: true,
+        configurable: true,
+        accessor: false,
+        logs: 0
+      } });
+    }
+  };
+
+  const ctx = vm.createContext({
+    console: consoleObj,
+    wx,
+    wadLogicLayer: layer,
+    setTimeout,
+    clearTimeout,
+    setInterval: function () { return 0; },
+    clearInterval: function () {},
+    Date,
+    JSON,
+    Math
+  });
+  vm.runInContext(logicSrc, ctx, { filename: 'wad-logic-game.js' });
+  handlers.attach.forEach((fn) => fn('wx-game'));
+  await wait(150);
+
+  const probe = await registered.get('lv:probe')();
+  assert.equal(probe.contexts.length, 2, 'probe contexts');
+  assert.ok(probe.results.some((r) => r.state && r.state.gameGlobal === 'object'), 'probe game context');
+
+  const items = registered.get('lv:fetch')(0, 500).items;
+  assert.ok(items.some((e) => e.text === 'game-hello' && e.source === 'game'), 'game log ingested');
+  assert.ok(patchExpr.length > 0, 'patch expression captured');
+
+  const gameConsole = makeConsole();
+  const gameSandbox = { GameGlobal: {}, console: gameConsole.consoleObj, Date, JSON, Math };
+  const gameCtx = vm.createContext(gameSandbox);
+  const status = vm.runInContext(patchExpr, gameCtx, { filename: 'game-patch.js' });
+  assert.equal(status, 'patched:8', 'game patch status');
+
+  gameConsole.consoleObj.log('hello', { a: 1 });
+  gameConsole.consoleObj.error(new Error('oops'));
+  const logs = gameSandbox.GameGlobal.__wadLVLogs;
+  assert.ok(logs.length >= 2, 'game buffer');
+  assert.ok(logs.some((x) => x.text.indexOf('hello') >= 0), 'game patch text');
+  assert.ok(logs.some((x) => x.level === 'error' && x.stack), 'game patch stack');
+
+  console.log('game bridge tests passed; patch length', patchExpr.length);
+}
+
 await testLogic();
+await testGameBridge();
 await testRender();
 console.log('ALL TESTS PASSED');
