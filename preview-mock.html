@@ -92,6 +92,23 @@
             ]
           });
         }
+        if (name === 'lv:ingest') {
+          var incoming = args[0] || [];
+          var added = incoming.map(function (it) {
+            seq++;
+            return {
+              seq: seq, at: it.at || Date.now(), level: it.level || 'log',
+              kind: it.kind || 'console', source: 'render',
+              page: it.page || '', text: it.text || '', stack: it.stack
+            };
+          });
+          for (var ii = 0; ii < added.length; ii++) mockEntries.push(added[ii]);
+          emit('lv:batch', {
+            appid: 'wx-demo-123456', sessionId: 'sess-1', sessionAt: 1000,
+            items: added, newestSeq: seq, dropped: 0
+          });
+          return Promise.resolve({ ok: true, n: added.length, newestSeq: seq });
+        }
         if (name === 'lv:test') return Promise.resolve({ ok: true, seq: seq });
         return Promise.resolve({ ok: true });
       },

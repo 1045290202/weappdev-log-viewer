@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="wad:package" content="log-viewer">
   <meta name="wad:name" content="日志查看器">
-  <meta name="wad:version" content="1.0.5">
-  <meta name="wad:versionCode" content="6">
+  <meta name="wad:version" content="1.0.6">
+  <meta name="wad:versionCode" content="7">
   <meta name="wad:author" content="WeAppDev Plugin">
   <meta name="wad:description" content="捕获小程序/小游戏逻辑层与渲染层 console、未捕获异常、页面路由、网络摘要与 Storage 写入；支持过滤、搜索、复制、导出，并内置可选的 vConsole 视图。">
   <style>
@@ -444,6 +444,7 @@
     }
 
     function matches(e) {
+      if ((e.text || '').indexOf('__lv_probe_') >= 0) return false;
       if (!sevOn[e.sev || sevOf(e)]) return false;
       if (kindFilter !== 'all') {
         if (kindFilter === 'console') {
@@ -938,6 +939,7 @@
 
     function vcFeed(e) {
       if (!vcActive || !e || e.seq == null) return;
+      if ((e.text || '').indexOf('__lv_probe_') >= 0) return;
       if (vcSeen[e.seq]) return;
       vcSeen[e.seq] = 1;
       var src = e.source === 'render' ? 'R' : (e.source === 'host' ? 'H' : 'L');
@@ -1268,6 +1270,50 @@
       });
     }
 
+    var renderSummaryDone = false;
+    var renderSummaryTries = 0;
+
+    async function autoRenderSummary() {
+      if (renderSummaryDone) return;
+      renderSummaryDone = true;
+      var text = '';
+      try {
+        var p = await P.renderLayer.page();
+        var dom = await P.renderLayer.eval(
+          '(function(){' +
+            'var w=document.querySelector("web-view");' +
+            'var c=document.querySelector("canvas");' +
+            'return {' +
+              'webView:!!w,' +
+              'canvas:!!c,' +
+              'src:w?(w.src||w.getAttribute("src")||""):"",' +
+              'title:document.title||""' +
+            '};' +
+          '})()'
+        );
+        text = '[lv] render · ' + (p && p.url ? String(p.url).slice(0, 160) : '') +
+          ' · webView=' + !!(dom && dom.webView) +
+          ' · canvas=' + !!(dom && dom.canvas) +
+          (dom && dom.src ? ' · src=' + String(dom.src).slice(0, 120) : '');
+      } catch (e) {
+        text = '[lv] render unavailable · ' + (e && (e.code || e.message) || e);
+      }
+      try {
+        await P.logicLayer.call('lv:ingest', [{
+          at: Date.now(),
+          level: 'info',
+          kind: 'session',
+          page: 'render',
+          text: text
+        }]);
+      } catch (e) {
+        if (renderSummaryTries++ < 2) {
+          renderSummaryDone = false;
+          setTimeout(autoRenderSummary, 2000);
+        }
+      }
+    }
+
     function boot() {
       cacheEls();
       bindUI();
@@ -1301,6 +1347,7 @@
           });
         });
         startPolling();
+        setTimeout(autoRenderSummary, 1500);
       }, function () {
         setState('面板未就绪', 'bad');
       });
@@ -1316,7 +1363,7 @@
   (function () {
     'use strict';
 
-    var VERSION = '1.0.5';
+    var VERSION = '1.0.6';
     var CONSOLE_KEY = '__wadLogViewerConsole__';
     var WX_ERR_KEY = '__wadLogViewerErrors__';
     var OPT_KEY = 'options';
@@ -1892,6 +1939,9 @@
     var gameBridgeAttempts = 0;
     var gameBridgeDone = false;
     var lastGameBridgeStatus = '';
+    var bridgeProbeTimer = null;
+    var bridgeProbeBusy = false;
+    var lastBridgeProbeKey = '';
 
     var GLOBAL_REF = '(typeof GameGlobal !== "undefined") ? GameGlobal : ((typeof globalThis !== "undefined") ? globalThis : this)';
 
@@ -2025,7 +2075,7 @@
         } catch (e) {}
 
         g.__wadLVGen = ` + GEN + `;
-        g.__wadLVPatched = "1.0.5";
+        g.__wadLVPatched = "1.0.6";
         return "patched:" + consoleOk + "+" + engineOk;
       })()`;
     }
@@ -2107,6 +2157,7 @@
           lastGameBridgeStatus = bridgeTargets.map(function (t) {
             return t.name + ':' + t.status;
           }).join('; ').slice(0, 800);
+          scheduleBridgeProbe();
         } else {
           gameBridgeAttempts++;
           lastGameBridgeStatus = 'no console context (' + gameBridgeAttempts + ')' +
@@ -2156,6 +2207,60 @@
         }
       } finally {
         gamePollBusy = false;
+      }
+    }
+
+    function scheduleBridgeProbe() {
+      if (bridgeProbeTimer) return;
+      bridgeProbeTimer = setTimeout(function () {
+        bridgeProbeTimer = null;
+        runBridgeProbe();
+      }, 1200);
+    }
+
+    async function runBridgeProbe() {
+      if (!active || bridgeProbeBusy || !bridgeTargets.length) return;
+      var key = bridgeTargets.map(function (t) { return t.id; }).join(',');
+      if (key === lastBridgeProbeKey) return;
+      lastBridgeProbeKey = key;
+      bridgeProbeBusy = true;
+      try {
+        var dbg = safe(function () { return wadLogicLayer.debugger; }, null);
+        if (!dbg) return;
+        var tokens = [];
+        for (var i = 0; i < bridgeTargets.length; i++) {
+          var t = bridgeTargets[i];
+          var token = '__lv_probe_' + TOKEN + '_' + t.id + '__';
+          try {
+            await dbg.evalGlobal(
+              '(function(){try{console.log("' + token + '");return "ok";}catch(e){return "err:" + e;}})()',
+              true, t.id
+            );
+            tokens.push({ target: t, token: token });
+          } catch (e) {
+            tokens.push({ target: t, token: token, error: String(e && e.message || e) });
+          }
+        }
+        await new Promise(function (r) { setTimeout(r, 1800); });
+        var parts = [];
+        for (var j = 0; j < tokens.length; j++) {
+          var tk = tokens[j];
+          var hit = false;
+          for (var k = entries.length - 1; k >= 0; k--) {
+            if ((entries[k].text || '').indexOf(tk.token) >= 0) { hit = true; break; }
+          }
+          parts.push(tk.target.name + ' ' +
+            (tk.error ? 'eval-error' : (hit ? 'captured' : 'NOT-captured')));
+        }
+        push('info', 'session', 'host',
+          '[lv] ctx probe · ' + parts.join(' · '),
+          { meta: { targets: bridgeTargets.map(function (t) {
+            return { id: t.id, name: t.name, game: !!t.game };
+          }) } });
+      } catch (e) {
+        push('warn', 'session', 'host', '[lv] ctx probe failed: ' + (e && e.message || e));
+      } finally {
+        bridgeProbeBusy = false;
       }
     }
 
@@ -2560,7 +2665,7 @@
   (function () {
     'use strict';
 
-    var VERSION = '1.0.5';
+    var VERSION = '1.0.6';
     var KEY = '__wadLogViewerRender__';
     var TOKEN = 'lvr-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
     var GEN = Date.now() * 1000 + Math.floor(Math.random() * 1000);
@@ -2939,7 +3044,7 @@
 
 如果客户端只支持远程 URL，用下面任意一个：
 
-- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.5/log-viewer.zip`
+- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.6/log-viewer.zip`
 - Raw zip：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.zip`
 - 单文件 HTML（无 vConsole）：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.html`
 
@@ -2972,6 +3077,7 @@ node verify.mjs  # Node mock 测试逻辑层/渲染层采集
 
 ## 版本
 
+1.0.6 — 自动在每个 V8 上下文打一条 console 探针并在面板输出 captured / NOT-captured；面板打开时自动记录 render 的 webView/canvas 状态。
 1.0.5 — 增加 Cocos `cc.log` / Egret `egret.log` 引擎 logger 桥接，与 console 自动去重；探测增加 cc/egret 全局对象字段。
 1.0.4 — 桥接扩展为所有有 console 的 V8 上下文，探测上下文同时返回渲染层 page/targets/dom（web-view/canvas）。
 1.0.3 — 增加 console 自检、V8 上下文探测与 GameGlobal 小游戏 console 桥接，修复小游戏业务日志不在插件上下文时抓不到。
