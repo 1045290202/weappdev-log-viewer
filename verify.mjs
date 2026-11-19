@@ -197,7 +197,7 @@ async function testLogic() {
 
   // 诊断
   const diag = registered.get('lv:diag')();
-  assert.equal(diag.version, '1.0.3', 'diag version');
+  assert.equal(diag.version, '1.0.4', 'diag version');
   assert.equal(diag.hooks.console, true, 'diag console hook');
   assert.equal(diag.hooks.error, true, 'diag error hook');
 
@@ -351,15 +351,15 @@ async function testGameBridge() {
       ] });
     },
     evalGlobal(expr, byValue, ctxId) {
-      if (expr === 'typeof GameGlobal') {
-        return Promise.resolve({ value: ctxId === 2 ? 'object' : 'undefined' });
+      if (expr.indexOf('return {c:typeof console,g:typeof GameGlobal}') >= 0) {
+        return Promise.resolve({ value: { c: 'object', g: ctxId === 2 ? 'object' : 'undefined' } });
       }
       if (expr.indexOf('__wadLVPatched') >= 0 && expr.indexOf('methods') >= 0) {
         patchExpr = expr;
-        return Promise.resolve({ value: 'patched:8' });
+        return Promise.resolve({ value: 'patched:' + (ctxId === 2 ? 8 : 0) });
       }
       if (expr.indexOf('splice') >= 0) {
-        if (!servedGameLog) {
+        if (ctxId === 2 && !servedGameLog) {
           servedGameLog = true;
           return Promise.resolve({ value: [
             { level: 'log', at: Date.now(), text: 'game-hello', stack: '' }
@@ -377,7 +377,8 @@ async function testGameBridge() {
         writable: true,
         configurable: true,
         accessor: false,
-        logs: 0
+        logs: 0,
+        engine: { cc: 'undefined', egret: 'undefined', laya: 'undefined', realtimeLog: false }
       } });
     }
   };

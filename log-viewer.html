@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="wad:package" content="log-viewer">
   <meta name="wad:name" content="日志查看器">
-  <meta name="wad:version" content="1.0.3">
-  <meta name="wad:versionCode" content="4">
+  <meta name="wad:version" content="1.0.4">
+  <meta name="wad:versionCode" content="5">
   <meta name="wad:author" content="WeAppDev Plugin">
   <meta name="wad:description" content="捕获小程序/小游戏逻辑层与渲染层 console、未捕获异常、页面路由、网络摘要与 Storage 写入；支持过滤、搜索、复制、导出，并内置可选的 vConsole 视图。">
   <style>
@@ -389,6 +389,7 @@
       if (e.kind === 'session') return 'sys';
       if (e.source === 'render') return 'r-js';
       if (e.source === 'game') return 'game';
+      if (e.source === 'bridge') return 'ctx';
       return 'js';
     }
 
@@ -1208,16 +1209,44 @@
       });
 
       els.optProbe.addEventListener('click', async function () {
-        toast('正在探测 V8 上下文…');
+        toast('正在探测 V8 上下文与渲染层…');
+        var out = {};
         try {
-          var d = await P.logicLayer.call('lv:probe');
-          els.diag.hidden = false;
-          els.diag.textContent = safeJson(d, 10000);
-          toast('探测完成');
+          out.logic = await P.logicLayer.call('lv:probe');
         } catch (e) {
-          els.diag.hidden = false;
-          els.diag.textContent = '探测失败：' + (e && (e.code || e.message) || e);
+          out.logicError = String(e && (e.code || e.message) || e);
         }
+        try {
+          out.renderPage = await P.renderLayer.page();
+        } catch (e) {
+          out.renderPageError = String(e && (e.code || e.message) || e);
+        }
+        try {
+          out.renderTargets = await P.renderLayer.targets();
+        } catch (e) {
+          out.renderTargetsError = String(e && (e.code || e.message) || e);
+        }
+        try {
+          out.renderDom = await P.renderLayer.eval(
+            '(function(){' +
+              'var w=document.querySelector("web-view");' +
+              'var c=document.querySelector("canvas");' +
+              'return {' +
+                'hasWebView:!!w,' +
+                'webViewSrc:w?(w.src||w.getAttribute("src")||""):"",' +
+                'hasCanvas:!!c,' +
+                'canvasSize:c?[c.width,c.height]:null,' +
+                'title:document.title||"",' +
+                'bodyStart:(document.body?document.body.innerHTML:"").slice(0,300)' +
+              '};' +
+            '})()'
+          );
+        } catch (e) {
+          out.renderDomError = String(e && (e.code || e.message) || e);
+        }
+        els.diag.hidden = false;
+        els.diag.textContent = safeJson(out, 20000);
+        toast('探测完成');
       });
 
       els.optRender.addEventListener('click', async function () {
@@ -1287,7 +1316,7 @@
   (function () {
     'use strict';
 
-    var VERSION = '1.0.3';
+    var VERSION = '1.0.4';
     var CONSOLE_KEY = '__wadLogViewerConsole__';
     var WX_ERR_KEY = '__wadLogViewerErrors__';
     var OPT_KEY = 'options';
@@ -1855,7 +1884,7 @@
       selfHealTimer = null;
     }
 
-    var gameCtxId = 0;
+    var bridgeTargets = [];
     var gameBridgeTimer = null;
     var gamePollTimer = null;
     var gameBridgeBusy = false;
@@ -1863,6 +1892,8 @@
     var gameBridgeAttempts = 0;
     var gameBridgeDone = false;
     var lastGameBridgeStatus = '';
+
+    var GLOBAL_REF = '(typeof GameGlobal !== "undefined") ? GameGlobal : ((typeof globalThis !== "undefined") ? globalThis : this)';
 
     function evalValue(r) {
       if (r == null) return undefined;
@@ -1895,10 +1926,10 @@
 
     function gamePatchExpr() {
       return `(function(){
-        var g = (typeof GameGlobal !== "undefined") ? GameGlobal : null;
-        if (!g) return "no-gameglobal";
+        var g = ` + GLOBAL_REF + `;
+        if (!g) return "no-global";
+        if (g.__wadLVGen && g.__wadLVGen > ` + GEN + `) return "newer";
         if (typeof console === "undefined") return "no-console";
-        g.__wadLVLogs = g.__wadLVLogs || [];
         if (!Array.isArray(g.__wadLVLogs)) g.__wadLVLogs = [];
         g.__wadLVOrig = g.__wadLVOrig || {};
         var methods = ["log", "info", "warn", "error", "debug", "dir", "table", "trace"];
@@ -1951,18 +1982,22 @@
             }
           })(methods[i]);
         }
-        g.__wadLVPatched = "1.0.3";
+        g.__wadLVGen = ` + GEN + `;
+        g.__wadLVPatched = "1.0.4";
         return "patched:" + ok;
       })()`;
     }
 
     function gameUnpatchExpr() {
       return `(function(){
-        var g = (typeof GameGlobal !== "undefined") ? GameGlobal : null;
+        var g = ` + GLOBAL_REF + `;
         if (!g || !g.__wadLVOrig) return "no-patch";
+        if (g.__wadLVGen && g.__wadLVGen > ` + GEN + `) return "newer";
         for (var m in g.__wadLVOrig) {
-          try { Object.defineProperty(console, m, { value: g.__wadLVOrig[m], configurable: true, writable: true }); }
-          catch (e) { try { console[m] = g.__wadLVOrig[m]; } catch (e2) {} }
+          if (console[m] && console[m].__wadLVBridge) {
+            try { Object.defineProperty(console, m, { value: g.__wadLVOrig[m], configurable: true, writable: true }); }
+            catch (e) { try { console[m] = g.__wadLVOrig[m]; } catch (e2) {} }
+          }
         }
         delete g.__wadLVOrig;
         delete g.__wadLVLogs;
@@ -1971,21 +2006,24 @@
       })()`;
     }
 
-    async function findGameContext(dbg) {
-      var cs = await dbg.contexts();
-      var items = (cs && cs.items) || [];
-      for (var i = 0; i < items.length; i++) {
-        var ctx = items[i];
-        try {
-          var r = await dbg.evalGlobal('typeof GameGlobal', true, ctx.id);
-          if (parseMaybe(evalValue(r)) === 'object') return ctx;
-        } catch (e) {}
+    function drainExpr() {
+      return `(function(){
+        var g = ` + GLOBAL_REF + `;
+        if (!g || !Array.isArray(g.__wadLVLogs)) return [];
+        if (g.__wadLVGen !== ` + GEN + `) return [];
+        return g.__wadLVLogs.splice(0, 100);
+      })()`;
+    }
+
+    function bridgeHasTarget(id) {
+      for (var i = 0; i < bridgeTargets.length; i++) {
+        if (bridgeTargets[i].id === id) return true;
       }
-      return null;
+      return false;
     }
 
     async function tryGameBridge() {
-      if (!active || gameCtxId || gameBridgeBusy || gameBridgeDone) return;
+      if (!active || gameBridgeBusy) return;
       var dbg = safe(function () { return wadLogicLayer.debugger; }, null);
       if (!dbg) {
         gameBridgeDone = true;
@@ -1994,10 +2032,43 @@
       gameBridgeBusy = true;
       try {
         await dbg.enable();
-        var ctx = await findGameContext(dbg);
-        if (!ctx) {
+        var cs = await dbg.contexts();
+        var items = (cs && cs.items) || [];
+        var errors = [];
+        for (var i = 0; i < items.length; i++) {
+          var ctx = items[i];
+          if (bridgeHasTarget(ctx.id)) {
+            // 上下文还在：补一次 patch，防止游戏自己重建了 console 方法
+            try { await dbg.evalGlobal(gamePatchExpr(), true, ctx.id); } catch (e) {}
+            continue;
+          }
+          try {
+            var info = parseMaybe(evalValue(await dbg.evalGlobal(
+              '(function(){return {c:typeof console,g:typeof GameGlobal};})()',
+              true, ctx.id
+            )));
+            if (!info || info.c === 'undefined') continue;
+            var pr = await dbg.evalGlobal(gamePatchExpr(), true, ctx.id);
+            var status = String(parseMaybe(evalValue(pr)));
+            bridgeTargets.push({
+              id: ctx.id,
+              name: ctx.name || String(ctx.id),
+              game: info.g === 'object',
+              status: status
+            });
+          } catch (e) {
+            errors.push((ctx.name || ctx.id) + ': ' + (e && e.message || e));
+          }
+        }
+        if (bridgeTargets.length) {
+          gameBridgeAttempts = 0;
+          lastGameBridgeStatus = bridgeTargets.map(function (t) {
+            return t.name + ':' + t.status;
+          }).join('; ').slice(0, 800);
+        } else {
           gameBridgeAttempts++;
-          lastGameBridgeStatus = 'no GameGlobal context (' + gameBridgeAttempts + ')';
+          lastGameBridgeStatus = 'no console context (' + gameBridgeAttempts + ')' +
+            (errors.length ? ' ' + errors.join('; ') : '');
           if (gameBridgeAttempts >= 5) {
             // 有页面路由说明更像小程序，5 次后放弃；路由为空（小游戏）则继续重试
             if (currentRoute) {
@@ -2007,12 +2078,7 @@
               gameBridgeAttempts = 0;
             }
           }
-          return;
         }
-        gameCtxId = ctx.id;
-        gameBridgeAttempts = 0;
-        var pr = await dbg.evalGlobal(gamePatchExpr(), true, ctx.id);
-        lastGameBridgeStatus = 'ctx ' + (ctx.name || ctx.id) + ' -> ' + parseMaybe(evalValue(pr));
       } catch (e) {
         lastGameBridgeStatus = 'error: ' + (e && e.message || e);
       } finally {
@@ -2021,29 +2087,31 @@
     }
 
     async function pollGameLogs() {
-      if (!active || !gameCtxId || gamePollBusy) return;
+      if (!active || !bridgeTargets.length || gamePollBusy) return;
       var dbg = safe(function () { return wadLogicLayer.debugger; }, null);
       if (!dbg) return;
       gamePollBusy = true;
       try {
-        var r = await dbg.evalGlobal(
-          '(function(){var g=(typeof GameGlobal!=="undefined")?GameGlobal:null;if(!g||!g.__wadLVLogs)return [];return g.__wadLVLogs.splice(0,100);})()',
-          true, gameCtxId
-        );
-        var arr = parseMaybe(evalValue(r));
-        if (arr && arr.length) {
-          for (var i = 0; i < arr.length; i++) {
-            var it = arr[i];
-            if (!it || !it.text) continue;
-            push(it.level || 'log', 'console', 'game', it.text, {
-              stack: it.stack,
-              page: 'GameGlobal'
-            });
+        var targets = bridgeTargets.slice();
+        for (var i = 0; i < targets.length; i++) {
+          var t = targets[i];
+          try {
+            var r = await dbg.evalGlobal(drainExpr(), true, t.id);
+            var arr = parseMaybe(evalValue(r));
+            if (arr && arr.length) {
+              for (var j = 0; j < arr.length; j++) {
+                var it = arr[j];
+                if (!it || !it.text) continue;
+                push(it.level || 'log', 'console', t.game ? 'game' : 'bridge', it.text, {
+                  stack: it.stack,
+                  page: t.name
+                });
+              }
+            }
+          } catch (e) {
+            bridgeTargets = bridgeTargets.filter(function (x) { return x.id !== t.id; });
           }
         }
-      } catch (e) {
-        gameCtxId = 0;
-        lastGameBridgeStatus = 'poll error: ' + (e && e.message || e);
       } finally {
         gamePollBusy = false;
       }
@@ -2054,7 +2122,7 @@
         stopGameBridgeTimers();
         gameBridgeDone = false;
         gameBridgeAttempts = 0;
-        gameCtxId = 0;
+        bridgeTargets = [];
       }
       if (gameBridgeTimer || gameBridgeDone) return;
       gameBridgeTimer = setInterval(tryGameBridge, 3000);
@@ -2063,14 +2131,16 @@
     }
 
     function stopGameBridge() {
-      var id = gameCtxId;
+      var targets = bridgeTargets.slice();
       stopGameBridgeTimers();
-      if (id) {
-        safe(function () {
-          wadLogicLayer.debugger.evalGlobal(gameUnpatchExpr(), true, id);
-        });
+      for (var i = 0; i < targets.length; i++) {
+        (function (t) {
+          safe(function () {
+            wadLogicLayer.debugger.evalGlobal(gameUnpatchExpr(), true, t.id);
+          });
+        })(targets[i]);
       }
-      gameCtxId = 0;
+      bridgeTargets = [];
       gameBridgeDone = false;
       gameBridgeAttempts = 0;
       gameBridgeBusy = false;
@@ -2146,7 +2216,9 @@
           error: !!(d && d.active && d.handlers && d.handlers.error)
         },
         gameBridge: {
-          ctxId: gameCtxId,
+          targets: bridgeTargets.map(function (t) {
+            return { id: t.id, name: t.name, game: !!t.game, status: t.status };
+          }),
           done: gameBridgeDone,
           attempts: gameBridgeAttempts,
           status: lastGameBridgeStatus
@@ -2209,7 +2281,9 @@
     wadLogicLayer.register('lv:probe', async function () {
       var dbg = safe(function () { return wadLogicLayer.debugger; }, null);
       var out = {
-        gameCtxId: gameCtxId,
+        targets: bridgeTargets.map(function (t) {
+          return { id: t.id, name: t.name, game: !!t.game, status: t.status };
+        }),
         bridgeDone: gameBridgeDone,
         attempts: gameBridgeAttempts,
         status: lastGameBridgeStatus,
@@ -2220,13 +2294,15 @@
         out.error = 'debugger unavailable';
         return out;
       }
-      if (!gameCtxId) {
+      if (!bridgeTargets.length) {
         gameBridgeDone = false;
         gameBridgeAttempts = 0;
         await tryGameBridge();
-        if (gameCtxId) startGameBridge(false);
       }
-      if (gameCtxId) await pollGameLogs();
+      if (bridgeTargets.length) {
+        startGameBridge(false);
+        await pollGameLogs();
+      }
       try {
         await dbg.enable();
       } catch (e) {
@@ -2245,7 +2321,7 @@
         try {
           var r = await dbg.evalGlobal(
             `(function(){
-              var g = (typeof GameGlobal !== "undefined") ? GameGlobal : null;
+              var g = (typeof GameGlobal !== "undefined") ? GameGlobal : ((typeof globalThis !== "undefined") ? globalThis : null);
               var d = null;
               try { d = Object.getOwnPropertyDescriptor(console, "log"); } catch (e) {}
               return {
@@ -2279,7 +2355,9 @@
           out.results.push({ id: ctx.id, name: ctx.name, error: String(e && e.message || e) });
         }
       }
-      out.gameCtxId = gameCtxId;
+      out.targets = bridgeTargets.map(function (t) {
+        return { id: t.id, name: t.name, game: !!t.game, status: t.status };
+      });
       out.status = lastGameBridgeStatus;
       return out;
     });
@@ -2438,7 +2516,7 @@
   (function () {
     'use strict';
 
-    var VERSION = '1.0.3';
+    var VERSION = '1.0.4';
     var KEY = '__wadLogViewerRender__';
     var TOKEN = 'lvr-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
     var GEN = Date.now() * 1000 + Math.floor(Math.random() * 1000);
@@ -2817,7 +2895,7 @@
 
 如果客户端只支持远程 URL，用下面任意一个：
 
-- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.3/log-viewer.zip`
+- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.4/log-viewer.zip`
 - Raw zip：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.zip`
 - 单文件 HTML（无 vConsole）：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.html`
 
@@ -2850,6 +2928,7 @@ node verify.mjs  # Node mock 测试逻辑层/渲染层采集
 
 ## 版本
 
+1.0.4 — 桥接扩展为所有有 console 的 V8 上下文，探测上下文同时返回渲染层 page/targets/dom（web-view/canvas）。
 1.0.3 — 增加 console 自检、V8 上下文探测与 GameGlobal 小游戏 console 桥接，修复小游戏业务日志不在插件上下文时抓不到。
 1.0.2 — 增加逻辑层 hook 自愈与面板 3 秒轮询补拉，修复长时间运行后日志突然中断；面板过矮时整面板滚动。
 1.0.1 — 面板改为视口固定布局，修复浮窗/短面板内无法滚动；vConsole 改为 zip 资产按需加载。

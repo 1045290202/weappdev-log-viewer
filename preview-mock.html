@@ -77,7 +77,11 @@
         }
         if (name === 'lv:probe') {
           return Promise.resolve({
-            gameCtxId: 2, bridgeDone: false, attempts: 0, status: 'ctx WxaSub -> patched:8',
+            targets: [
+              { id: 1, name: 'MainContext', game: false, status: 'patched:0' },
+              { id: 2, name: 'WxaSub', game: true, status: 'patched:8' }
+            ],
+            bridgeDone: false, attempts: 0, status: 'MainContext:patched:0; WxaSub:patched:8',
             contexts: [
               { id: 1, name: 'MainContext' },
               { id: 2, name: 'WxaSub', isDefault: true }
@@ -95,7 +99,20 @@
       storage: { get: function () { return Promise.resolve(undefined); }, set: function () { return Promise.resolve(); } },
       ui: { toast: toast }
     },
-    renderLayer: { eval: function () { return Promise.resolve('ok'); } },
+    renderLayer: {
+      eval: function (expr) {
+        if (expr && expr.indexOf('web-view') >= 0) {
+          return Promise.resolve({
+            hasWebView: false, webViewSrc: '', hasCanvas: true,
+            canvasSize: [390, 720], title: 'demo',
+            bodyStart: '<canvas width="390" height="720"></canvas>'
+          });
+        }
+        return Promise.resolve('ok');
+      },
+      page: function () { return Promise.resolve({ url: 'https://usr/page.html', title: 'demo' }); },
+      targets: function () { return Promise.resolve({ items: [{ id: 'page-1', type: 'page' }] }); }
+    },
     assets: {
       script: function (p) {
         return new Promise(function (resolve, reject) {
