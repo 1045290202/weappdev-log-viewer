@@ -23,7 +23,7 @@
 
 如果客户端只支持远程 URL，用下面任意一个：
 
-- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.6/log-viewer.zip`
+- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.7/log-viewer.zip`
 - Raw zip：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.zip`
 - 单文件 HTML（无 vConsole）：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.html`
 
@@ -56,6 +56,7 @@ node verify.mjs  # Node mock 测试逻辑层/渲染层采集
 
 ## 版本
 
+1.0.7 — 自动把桥接成功/失败原因打到日志列表（[lv] bridge），并把 render 不可用提示改成可读文案。
 1.0.6 — 自动在每个 V8 上下文打一条 console 探针并在面板输出 captured / NOT-captured；面板打开时自动记录 render 的 webView/canvas 状态。
 1.0.5 — 增加 Cocos `cc.log` / Egret `egret.log` 引擎 logger 桥接，与 console 自动去重；探测增加 cc/egret 全局对象字段。
 1.0.4 — 桥接扩展为所有有 console 的 V8 上下文，探测上下文同时返回渲染层 page/targets/dom（web-view/canvas）。

@@ -197,7 +197,7 @@ async function testLogic() {
 
   // 诊断
   const diag = registered.get('lv:diag')();
-  assert.equal(diag.version, '1.0.6', 'diag version');
+  assert.equal(diag.version, '1.0.7', 'diag version');
   assert.equal(diag.hooks.console, true, 'diag console hook');
   assert.equal(diag.hooks.error, true, 'diag error hook');
 
