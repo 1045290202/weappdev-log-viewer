@@ -1,0 +1,2453 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="wad:package" content="log-viewer">
+  <meta name="wad:name" content="日志查看器">
+  <meta name="wad:version" content="1.0.2">
+  <meta name="wad:versionCode" content="3">
+  <meta name="wad:author" content="WeAppDev Plugin">
+  <meta name="wad:description" content="捕获小程序/小游戏逻辑层与渲染层 console、未捕获异常、页面路由、网络摘要与 Storage 写入；支持过滤、搜索、复制、导出，并内置可选的 vConsole 视图。">
+  <style>
+    :root {
+      --lv-bg: #f3f5f8;
+      --lv-card: #ffffff;
+      --lv-line: #e3e8ef;
+      --lv-line-soft: #f1f5f9;
+      --lv-text: #111827;
+      --lv-dim: #6b7280;
+      --lv-dim2: #94a3b8;
+      --lv-accent: #0f766e;
+      --lv-err: #dc2626;
+      --lv-warn: #d97706;
+      --lv-info: #2563eb;
+      --lv-debug: #7c3aed;
+      --lv-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "PingFang SC", "Microsoft YaHei", monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      overflow: hidden; overscroll-behavior: none;
+      background: var(--lv-bg); color: var(--lv-text);
+      font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    #lv {
+      position: fixed; top: 0; right: 0; bottom: 0; left: 0;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    #lv.lv-page-scroll {
+      overflow-y: auto; overflow-x: hidden;
+      -webkit-overflow-scrolling: touch; touch-action: pan-y; overscroll-behavior: contain;
+    }
+    #lv.lv-page-scroll .lv-list { flex: 0 0 auto; overflow: visible; }
+    .lv-head {
+      padding: 8px 10px 6px; background: var(--lv-card);
+      border-bottom: 1px solid var(--lv-line); flex: 0 0 auto;
+    }
+    .lv-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .lv-title { font-weight: 700; font-size: 13px; letter-spacing: .2px; flex: 0 0 auto; }
+    .lv-pill {
+      font-size: 10px; line-height: 1.6; padding: 0 6px; border-radius: 999px;
+      background: #e2e8f0; color: #475569; flex: 0 0 auto;
+    }
+    .lv-pill.ok { background: #dcfce7; color: #15803d; }
+    .lv-pill.bad { background: #fee2e2; color: #b91c1c; }
+    .lv-pill.wait { background: #fef3c7; color: #b45309; }
+    .lv-dim { color: var(--lv-dim); }
+    #lv-app { font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .lv-metrics {
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+      margin-top: 4px; color: #475569; font-size: 10.5px;
+    }
+    .lv-metrics b { color: var(--lv-text); font-weight: 600; }
+    .lv-bar {
+      display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+      background: var(--lv-card); border-bottom: 1px solid var(--lv-line-soft); flex: 0 0 auto;
+    }
+    .lv-actions { flex-wrap: wrap; padding-top: 0; }
+    .lv-levels { display: flex; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; }
+    .lv-chip {
+      font: inherit; font-size: 10.5px; line-height: 1; padding: 5px 7px;
+      border: 1px solid #d7dfe8; background: #fff; color: #64748b;
+      border-radius: 999px; cursor: pointer; white-space: nowrap; flex: 0 0 auto;
+    }
+    .lv-chip.on { color: #fff; border-color: #94a3b8; background: #64748b; }
+    .lv-chip.on[data-sev="error"] { background: var(--lv-err); border-color: var(--lv-err); }
+    .lv-chip.on[data-sev="warn"] { background: var(--lv-warn); border-color: var(--lv-warn); }
+    .lv-chip.on[data-sev="info"] { background: var(--lv-info); border-color: var(--lv-info); }
+    .lv-chip.on[data-sev="debug"] { background: var(--lv-debug); border-color: var(--lv-debug); }
+    .lv-btn {
+      font: inherit; font-size: 10.5px; line-height: 1; padding: 5px 7px;
+      border: 1px solid #d7dfe8; background: #fff; color: #334155;
+      border-radius: 5px; cursor: pointer; white-space: nowrap;
+    }
+    .lv-btn:active { transform: translateY(1px); }
+    .lv-btn.on { border-color: var(--lv-accent); color: var(--lv-accent); background: #ecfdf5; }
+    .lv-btn.primary { border-color: var(--lv-accent); background: var(--lv-accent); color: #fff; }
+    .lv-btn.danger { color: var(--lv-err); }
+    .lv-btn:disabled { opacity: .45; cursor: default; }
+    .lv-search {
+      flex: 1; min-width: 0; font: inherit; font-size: 11px; padding: 5px 8px;
+      border: 1px solid #d7dfe8; border-radius: 5px; background: #fff; color: var(--lv-text);
+      outline: none;
+    }
+    .lv-search:focus { border-color: var(--lv-accent); }
+    .lv-kind {
+      font: inherit; font-size: 10.5px; padding: 4px 4px; border: 1px solid #d7dfe8;
+      border-radius: 5px; background: #fff; color: #334155; flex: 0 0 auto;
+    }
+    .lv-list {
+      flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden;
+      -webkit-overflow-scrolling: touch; touch-action: pan-y; overscroll-behavior: contain;
+      background: var(--lv-card); padding-bottom: 8px;
+    }
+    .lv-row {
+      border-left: 3px solid transparent; border-bottom: 1px solid var(--lv-line-soft);
+      padding: 4px 8px 4px 6px; cursor: pointer;
+    }
+    .lv-row:hover { background: #f8fafc; }
+    .lv-row.sev-error { border-left-color: var(--lv-err); }
+    .lv-row.sev-warn { border-left-color: var(--lv-warn); }
+    .lv-row.sev-info { border-left-color: var(--lv-info); }
+    .lv-row.sev-debug { border-left-color: var(--lv-debug); }
+    .lv-line { display: flex; gap: 4px; align-items: flex-start; }
+    .lv-time {
+      flex: 0 0 auto; color: var(--lv-dim2); font-family: var(--lv-mono);
+      font-size: 9.5px; padding-top: 2px;
+    }
+    .lv-lv {
+      flex: 0 0 auto; min-width: 14px; text-align: center; font-weight: 700;
+      font-size: 9.5px; line-height: 1.5; padding: 0 3px; border-radius: 3px;
+      background: #94a3b8; color: #fff;
+    }
+    .sev-error .lv-lv { background: var(--lv-err); }
+    .sev-warn .lv-lv { background: var(--lv-warn); }
+    .sev-info .lv-lv { background: var(--lv-info); }
+    .sev-debug .lv-lv { background: var(--lv-debug); }
+    .lv-kd {
+      flex: 0 0 auto; font-size: 9px; line-height: 1.6; padding: 0 3px;
+      color: #64748b; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 3px;
+    }
+    .lv-msg {
+      flex: 1; min-width: 0; font-family: var(--lv-mono); font-size: 10.8px;
+      white-space: pre-wrap; word-break: break-all; max-height: 4.4em; overflow: hidden;
+    }
+    .lv-row.open .lv-msg { max-height: none; }
+    .lv-detail {
+      display: none; margin: 6px 0 2px; padding: 6px 7px; background: #f8fafc;
+      border: 1px solid var(--lv-line); border-radius: 4px;
+      font-family: var(--lv-mono); font-size: 10.2px; line-height: 1.5;
+      white-space: pre-wrap; word-break: break-all; max-height: 280px; overflow: auto;
+    }
+    .lv-row.open .lv-detail { display: block; }
+    .lv-empty { padding: 28px 14px; text-align: center; color: var(--lv-dim2); font-size: 12px; line-height: 1.8; }
+    mark { background: #fde68a; color: inherit; border-radius: 2px; }
+    .lv-settings {
+      position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 30;
+      background: var(--lv-bg); padding: 10px 12px 18px;
+      overflow-y: auto; -webkit-overflow-scrolling: touch;
+      touch-action: pan-y; overscroll-behavior: contain;
+    }
+    .lv-set-head {
+      position: sticky; top: -10px; z-index: 1; margin-top: -10px;
+      padding: 10px 0 8px; background: var(--lv-bg);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .lv-set-head strong { font-size: 13px; }
+    .lv-set-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; padding: 3px 0; color: #334155; font-size: 11px;
+    }
+    .lv-set-row input[type="checkbox"] { accent-color: var(--lv-accent); }
+    .lv-set-row input[type="number"] {
+      width: 76px; font: inherit; font-size: 11px; padding: 3px 5px;
+      border: 1px solid #d7dfe8; border-radius: 4px;
+    }
+    .lv-set-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+    .lv-diag {
+      margin: 6px 0 0; padding: 6px; background: #0f172a; color: #d1fae5;
+      border-radius: 4px; font-family: var(--lv-mono); font-size: 10px;
+      white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow: auto;
+    }
+    .lv-foot {
+      flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
+      gap: 8px; padding: 4px 9px; background: var(--lv-card);
+      border-top: 1px solid var(--lv-line); color: #64748b; font-size: 9.5px;
+    }
+    .lv-foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #lv-vc { color: #0f766e; }
+  </style>
+</head>
+<body>
+  <div id="lv">
+    <header class="lv-head">
+      <div class="lv-title-row">
+        <span class="lv-title">日志查看器</span>
+        <span id="lv-state" class="lv-pill wait">连接中…</span>
+        <span id="lv-app" class="lv-dim"></span>
+      </div>
+      <div class="lv-metrics">
+        <span><b id="lv-count">0</b> 条</span>
+        <span>丢弃 <b id="lv-dropped">0</b></span>
+        <span id="lv-buf" class="lv-dim"></span>
+      </div>
+    </header>
+
+    <div class="lv-bar">
+      <div class="lv-levels" id="lv-levels">
+        <button class="lv-chip on" data-sev="error">错误</button>
+        <button class="lv-chip on" data-sev="warn">警告</button>
+        <button class="lv-chip on" data-sev="info">信息</button>
+        <button class="lv-chip" data-sev="debug">调试</button>
+      </div>
+      <select id="lv-kind" class="lv-kind" title="类型过滤">
+        <option value="all">全部类型</option>
+        <option value="console">控制台</option>
+        <option value="error">仅错误</option>
+        <option value="page">页面</option>
+        <option value="net">网络</option>
+        <option value="storage">存储</option>
+      </select>
+    </div>
+
+    <div class="lv-bar">
+      <input id="lv-search" class="lv-search" placeholder="过滤文本，或 /正则/" autocomplete="off" spellcheck="false">
+    </div>
+
+    <div class="lv-bar lv-actions">
+      <button id="lv-follow" class="lv-btn on" title="有新日志时自动滚到底部">跟随</button>
+      <button id="lv-pause" class="lv-btn" title="暂停列表刷新，采集不中断">暂停</button>
+      <button id="lv-clear" class="lv-btn danger">清空</button>
+      <button id="lv-copy" class="lv-btn">复制</button>
+      <button id="lv-save" class="lv-btn">导出</button>
+      <button id="lv-vc" class="lv-btn" title="用 vConsole 面板查看当前日志">vConsole</button>
+      <button id="lv-gear" class="lv-btn">设置</button>
+    </div>
+
+    <div id="lv-settings" class="lv-settings" hidden>
+      <div class="lv-set-head">
+        <strong>设置</strong>
+        <button id="lv-set-close" class="lv-btn">关闭</button>
+      </div>
+      <label class="lv-set-row"><span>捕获网络摘要（默认关闭，避免刷屏）</span><input type="checkbox" id="opt-net"></label>
+      <label class="lv-set-row"><span>捕获 Storage 写入（可能含敏感值）</span><input type="checkbox" id="opt-storage"></label>
+      <label class="lv-set-row"><span>记录页面路由标记</span><input type="checkbox" id="opt-page"></label>
+      <label class="lv-set-row"><span>保留原 console 输出</span><input type="checkbox" id="opt-mirror"></label>
+      <label class="lv-set-row"><span>缓冲上限（200–5000）</span><input type="number" id="opt-max" min="200" max="5000" step="100"></label>
+      <div class="lv-set-actions">
+        <button id="opt-apply" class="lv-btn primary">应用</button>
+        <button id="opt-diag" class="lv-btn">诊断</button>
+        <button id="opt-test" class="lv-btn">测试日志</button>
+        <button id="opt-render" class="lv-btn">渲染层测试</button>
+      </div>
+      <pre id="lv-diag" class="lv-diag" hidden></pre>
+    </div>
+
+    <div id="lv-list" class="lv-list">
+      <div class="lv-empty">等待日志…<br><span class="lv-dim">console 输出、异常、路由、网络会出现在这里</span></div>
+    </div>
+
+    <footer class="lv-foot">
+      <span id="lv-foot-left">逻辑层注入后开始采集</span>
+      <span id="lv-foot-right" class="lv-dim">Plugin API 1.0</span>
+    </footer>
+  </div>
+
+  <!-- vConsole 3.15.1（MIT）作为 zip 资产按需加载：assets/vconsole.min.js
+       286KB 内联会超过宿主单脚本 256KB 限制，所以必须走资产；单文件安装时 vConsole 按钮会提示。 -->
+
+  <script>
+  (function () {
+    'use strict';
+
+    var P = window.wadPanelLayer;
+    var INITIAL_TAIL = 500;
+    var FETCH_PAGE = 200;
+    var FETCH_GUARD = 60;
+
+    var els = {};
+    var entries = [];
+    var bySeq = Object.create(null);
+    var lastSeq = 0;
+    var dropped = 0;
+    var ignoreThrough = 0;
+    var paused = false;
+    var follow = true;
+    var sevOn = { error: true, warn: true, info: true, debug: false };
+    var kindFilter = 'all';
+    var query = '';
+    var queryRe = null;
+    var rebuilding = false;
+    var rebuildTimer = null;
+    var filterTimer = null;
+    var saveSeqTimer = null;
+    var refreshing = false;
+    var prefsLoaded = false;
+    var connected = false;
+    var appid = '';
+    var logicSession = '';
+    var logicSessionAt = 0;
+    var prefsReady = false;
+    var opts = {
+      maxEntries: 3000,
+      captureNetwork: false,
+      captureStorage: false,
+      pageMarkers: true,
+      mirror: true
+    };
+    var vc = null;
+    var vcSeen = Object.create(null);
+    var vcActive = false;
+    var pollTimer = null;
+    var polling = false;
+
+    function $(id) { return document.getElementById(id); }
+
+    function safe(fn, def) {
+      try { return fn(); } catch (e) { return def; }
+    }
+
+    function toast(msg) {
+      safe(function () { P.ui.toast(String(msg)); });
+    }
+
+    function setState(text, cls) {
+      els.state.textContent = text;
+      els.state.className = 'lv-pill ' + (cls || '');
+    }
+
+    function setFoot(text) {
+      els.footLeft.textContent = text || '';
+    }
+
+    function esc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function highlight(text) {
+      var s = esc(text);
+      if (!query || queryRe || query.length < 2) return s;
+      try {
+        var re = new RegExp('(' + query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig');
+        return s.replace(re, '<mark>$1</mark>');
+      } catch (e) {
+        return s;
+      }
+    }
+
+    function fmtTime(ms) {
+      var d = new Date(ms || Date.now());
+      function p(n, w) {
+        n = String(n);
+        w = w || 2;
+        while (n.length < w) n = '0' + n;
+        return n;
+      }
+      return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '.' + p(d.getMilliseconds(), 3);
+    }
+
+    function tsName() {
+      var d = new Date();
+      function p(n) { n = String(n); return n.length < 2 ? '0' + n : n; }
+      return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+    }
+
+    function safeJson(v, max) {
+      var s = safe(function () { return JSON.stringify(v, null, 2); }, String(v));
+      if (!s) s = String(v);
+      if (max && s.length > max) s = s.slice(0, max) + '\n…(已截断)';
+      return s;
+    }
+
+    function sevOf(e) {
+      if (e.level === 'error') return 'error';
+      if (e.level === 'warn') return 'warn';
+      if (e.level === 'debug') return 'debug';
+      return 'info';
+    }
+
+    function levelShort(level) {
+      if (level === 'error') return 'E';
+      if (level === 'warn') return 'W';
+      if (level === 'debug') return 'D';
+      if (level === 'info') return 'I';
+      if (level === 'log') return 'L';
+      return '?';
+    }
+
+    function kindShort(e) {
+      if (e.kind === 'exception') return 'err';
+      if (e.kind === 'page') return 'page';
+      if (e.kind === 'net') return 'net';
+      if (e.kind === 'storage') return 'store';
+      if (e.kind === 'session') return 'sys';
+      if (e.source === 'render') return 'r-js';
+      return 'js';
+    }
+
+    function normalizeOpts(v) {
+      v = v || {};
+      function num(x, def) {
+        var n = Number(x);
+        if (!isFinite(n)) return def;
+        n = Math.round(n);
+        return Math.max(200, Math.min(5000, n));
+      }
+      function bool(x, def) { return typeof x === 'boolean' ? x : def; }
+      return {
+        maxEntries: num(v.maxEntries, 3000),
+        captureNetwork: bool(v.captureNetwork, false),
+        captureStorage: bool(v.captureStorage, false),
+        pageMarkers: bool(v.pageMarkers, true),
+        mirror: bool(v.mirror, true)
+      };
+    }
+
+    function fillOptsUI() {
+      els.optNet.checked = !!opts.captureNetwork;
+      els.optStorage.checked = !!opts.captureStorage;
+      els.optPage.checked = !!opts.pageMarkers;
+      els.optMirror.checked = !!opts.mirror;
+      els.optMax.value = String(opts.maxEntries);
+    }
+
+    function updateMetrics(meta) {
+      els.count.textContent = String(entries.length);
+      els.dropped.textContent = String(dropped);
+      if (meta) {
+        els.buf.textContent = 'buffer ' + (meta.oldestSeq || 0) + '–' + (meta.newestSeq || 0);
+      } else {
+        els.buf.textContent = 'seq ' + lastSeq + ' / ' + opts.maxEntries;
+      }
+    }
+
+    function setQuery(v) {
+      query = String(v || '').trim();
+      queryRe = null;
+      if (query.length > 2 && query.charAt(0) === '/' && query.charAt(query.length - 1) === '/') {
+        try {
+          queryRe = new RegExp(query.slice(1, -1), 'i');
+          query = '';
+        } catch (e) {
+          queryRe = null;
+        }
+      }
+      if (!queryRe) query = query.toLowerCase();
+    }
+
+    function matches(e) {
+      if (!sevOn[e.sev || sevOf(e)]) return false;
+      if (kindFilter !== 'all') {
+        if (kindFilter === 'console') {
+          if (e.kind !== 'console' && e.kind !== 'exception') return false;
+        } else if (kindFilter === 'error') {
+          if (sevOf(e) !== 'error') return false;
+        } else if (e.kind !== kindFilter) {
+          return false;
+        }
+      }
+      if (query || queryRe) {
+        if (queryRe) {
+          queryRe.lastIndex = 0;
+          var hay = (e.text || '') + ' ' + (e.page || '') + ' ' + (e.source || '') + ' ' + (e.kind || '');
+          return queryRe.test(hay);
+        }
+        var hay2 = ((e.text || '') + ' ' + (e.page || '') + ' ' + (e.source || '') + ' ' + (e.kind || '')).toLowerCase();
+        return hay2.indexOf(query) >= 0;
+      }
+      return true;
+    }
+
+    function filteredEntries() {
+      var out = [];
+      for (var i = 0; i < entries.length; i++) {
+        if (matches(entries[i])) out.push(entries[i]);
+      }
+      return out;
+    }
+
+    function buildRow(e) {
+      var row = document.createElement('div');
+      row.className = 'lv-row sev-' + (e.sev || sevOf(e));
+      row.dataset.seq = String(e.seq);
+      var line = document.createElement('div');
+      line.className = 'lv-line';
+
+      var t = document.createElement('span');
+      t.className = 'lv-time';
+      t.textContent = fmtTime(e.at);
+
+      var lv = document.createElement('span');
+      lv.className = 'lv-lv';
+      lv.textContent = levelShort(e.level);
+
+      var kd = document.createElement('span');
+      kd.className = 'lv-kd';
+      kd.textContent = kindShort(e);
+
+      var msg = document.createElement('span');
+      msg.className = 'lv-msg';
+      msg.innerHTML = highlight(e.text || '');
+
+      line.appendChild(t);
+      line.appendChild(lv);
+      line.appendChild(kd);
+      line.appendChild(msg);
+      row.appendChild(line);
+
+      row.addEventListener('click', function () { toggleDetail(row, e); });
+      return row;
+    }
+
+    function toggleDetail(row, e) {
+      var pre = row.querySelector('.lv-detail');
+      if (pre) {
+        row.classList.toggle('open');
+        return;
+      }
+      pre = document.createElement('pre');
+      pre.className = 'lv-detail';
+      var lines = [];
+      lines.push(new Date(e.at).toLocaleString() + '  ' + (e.level || '') + '  ' + (e.kind || '') + '  ' + (e.source || ''));
+      if (e.page) lines.push('页面: ' + e.page);
+      lines.push('');
+      lines.push(e.text || '');
+      if (e.stack) {
+        lines.push('');
+        lines.push('调用栈:');
+        lines.push(e.stack);
+      }
+      if (e.meta) {
+        lines.push('');
+        lines.push('meta:');
+        lines.push(safeJson(e.meta, 4000));
+      }
+      pre.textContent = lines.join('\n');
+      row.appendChild(pre);
+      row.classList.add('open');
+    }
+
+    function showEmpty(text) {
+      els.list.innerHTML = '';
+      var d = document.createElement('div');
+      d.className = 'lv-empty';
+      d.textContent = text || '等待日志…';
+      els.list.appendChild(d);
+    }
+
+    function scrollBottom() {
+      safe(function () { els.list.scrollTop = els.list.scrollHeight; });
+    }
+
+    function applyScrollFallback() {
+      var lv = document.getElementById('lv');
+      if (!lv) return;
+      // 面板本身过矮时（工具栏占满高度），退化为整个面板滚动；
+      // 用容器高度而不是列表高度判断，避免列表高度变化造成来回切换。
+      var h = lv.clientHeight;
+      lv.classList.toggle('lv-page-scroll', h > 0 && h < 320);
+    }
+
+    function scheduleRebuild() {
+      if (rebuildTimer) return;
+      rebuildTimer = setTimeout(function () {
+        rebuildTimer = null;
+        rebuild();
+      }, 80);
+    }
+
+    function rebuild() {
+      if (rebuilding) { scheduleRebuild(); return; }
+      rebuilding = true;
+      try {
+        var frag = document.createDocumentFragment();
+        var n = 0;
+        for (var i = 0; i < entries.length; i++) {
+          if (!matches(entries[i])) continue;
+          frag.appendChild(buildRow(entries[i]));
+          n++;
+        }
+        els.list.innerHTML = '';
+        if (!n) {
+          var d = document.createElement('div');
+          d.className = 'lv-empty';
+          d.textContent = entries.length ? '没有匹配的日志' : '等待日志…';
+          els.list.appendChild(d);
+        } else {
+          els.list.appendChild(frag);
+        }
+        if (follow) scrollBottom();
+      } finally {
+        rebuilding = false;
+      }
+    }
+
+    function appendLive(e) {
+      if (!matches(e)) return;
+      els.list.appendChild(buildRow(e));
+    }
+
+    function ingest(items) {
+      if (!items || !items.length) return;
+      var added = [];
+      for (var i = 0; i < items.length; i++) {
+        var e = items[i];
+        if (!e || e.seq == null) continue;
+        if (e.seq <= ignoreThrough) continue;
+        if (bySeq[e.seq]) continue;
+        e.sev = sevOf(e);
+        bySeq[e.seq] = e;
+        entries.push(e);
+        added.push(e);
+        if (e.seq > lastSeq) lastSeq = e.seq;
+      }
+      while (entries.length > opts.maxEntries) {
+        var old = entries.shift();
+        if (old) delete bySeq[old.seq];
+      }
+      if (!added.length) {
+        updateMetrics();
+        return;
+      }
+      updateMetrics();
+      if (paused) {
+        // 暂停时只更新计数，DOM 保持冻结；点「继续」再统一重建
+      } else {
+        var visible = [];
+        for (var j = 0; j < added.length; j++) {
+          if (matches(added[j])) visible.push(added[j]);
+        }
+        if (visible.length > 120) {
+          scheduleRebuild();
+        } else {
+          if (visible.length) {
+            var first = els.list.firstElementChild;
+            if (first && first.classList && first.classList.contains('lv-empty')) els.list.innerHTML = '';
+          }
+          for (var k = 0; k < visible.length; k++) appendLive(visible[k]);
+        }
+        if (follow) scrollBottom();
+      }
+      if (vcActive) {
+        for (var m = 0; m < added.length; m++) vcFeed(added[m]);
+      }
+    }
+
+    function persistSeq(now) {
+      if (saveSeqTimer && !now) return;
+      if (saveSeqTimer) {
+        clearTimeout(saveSeqTimer);
+        saveSeqTimer = null;
+      }
+      function write() {
+        safe(function () {
+          P.localStorage.setItem('lastSeq:' + (appid || '_'), String(lastSeq));
+        });
+      }
+      if (now) write();
+      else saveSeqTimer = setTimeout(function () { saveSeqTimer = null; write(); }, 400);
+    }
+
+    function resetLocal() {
+      entries = [];
+      bySeq = Object.create(null);
+      lastSeq = 0;
+      dropped = 0;
+      ignoreThrough = 0;
+      showEmpty('等待日志…');
+      updateMetrics();
+      safe(function () { P.localStorage.removeItem('lastSeq:' + (appid || '_')); });
+      vcSeen = Object.create(null);
+    }
+
+    function onBatch(d) {
+      if (!d || !d.items) return;
+      var sessionAt = Number(d.sessionAt) || 0;
+      if (d.sessionId && logicSession && d.sessionId !== logicSession) {
+        // 旧注入的延迟批次直接丢弃，不能污染新会话
+        if (sessionAt && logicSessionAt && sessionAt < logicSessionAt) return;
+        resetLocal();
+      }
+      if (d.sessionId) logicSession = d.sessionId;
+      if (sessionAt) logicSessionAt = sessionAt;
+      if (d.appid && !appid) {
+        appid = d.appid;
+        els.app.textContent = appid;
+      }
+      if (d.appid && appid && d.appid !== appid) {
+        appid = d.appid;
+        els.app.textContent = appid;
+        resetLocal();
+      }
+      ingest(d.items);
+      if (typeof d.dropped === 'number' && d.dropped > dropped) dropped = d.dropped;
+      updateMetrics();
+      persistSeq();
+    }
+
+    function onSession(d) {
+      if (!d) return;
+      var sessionAt = Number(d.sessionAt) || 0;
+      if (d.sessionId && logicSession && d.sessionId !== logicSession) {
+        if (sessionAt && logicSessionAt && sessionAt < logicSessionAt) return;
+        resetLocal();
+      }
+      if (d.sessionId) logicSession = d.sessionId;
+      if (sessionAt) logicSessionAt = sessionAt;
+      if (!d.appid) return;
+      if (!appid) {
+        appid = d.appid;
+        els.app.textContent = appid;
+      } else if (appid !== d.appid) {
+        appid = d.appid;
+        els.app.textContent = appid;
+        resetLocal();
+      }
+    }
+
+    async function loadPrefs() {
+      try {
+        var v = await P.storage.get('opts');
+        if (v && typeof v === 'object') {
+          opts = normalizeOpts(v);
+          prefsLoaded = true;
+        }
+      } catch (e) {
+        // 面板存储不可用时用逻辑层默认值
+      }
+      fillOptsUI();
+    }
+
+    async function refreshMeta() {
+      if (refreshing || !prefsReady) return;
+      refreshing = true;
+      try {
+        setState('连接中…', 'wait');
+        var meta = await P.logicLayer.call('lv:meta');
+        connected = true;
+
+        var prevApp = appid;
+        var nextApp = meta.appid || '';
+        var metaAt = Number(meta.sessionAt) || 0;
+        if (meta.sessionId && logicSession && meta.sessionId !== logicSession &&
+            metaAt && logicSessionAt && metaAt < logicSessionAt) {
+          // 旧注入的延迟响应，忽略
+          setState('已连接', 'ok');
+          return;
+        }
+        var sessionChanged = !!(meta.sessionId && logicSession && meta.sessionId !== logicSession);
+        if (meta.sessionId) logicSession = meta.sessionId;
+        if (metaAt) logicSessionAt = metaAt;
+        if ((prevApp && nextApp && prevApp !== nextApp) || sessionChanged) resetLocal();
+        appid = nextApp || prevApp;
+        els.app.textContent = appid || '';
+
+        if (!prefsLoaded) {
+          opts = normalizeOpts(meta.options || {});
+          fillOptsUI();
+        } else {
+          try {
+            var applied = await P.logicLayer.call('lv:setOptions', opts);
+            opts = normalizeOpts(applied || opts);
+            fillOptsUI();
+            meta = await P.logicLayer.call('lv:meta');
+          } catch (e2) {
+            // 设置应用失败不阻断读取
+          }
+        }
+
+        dropped = Math.max(dropped, meta.dropped || 0);
+        updateMetrics(meta);
+        setState('已连接', 'ok');
+        setFoot('逻辑层已连接 · ' + (meta.page || appid || ''));
+        await fetchMissed(meta);
+      } catch (e) {
+        connected = false;
+        setState('逻辑层不可用', 'bad');
+        setFoot('调试通道关闭或逻辑层未就绪' + (e && e.code ? '（' + e.code + '）' : ''));
+      } finally {
+        refreshing = false;
+      }
+    }
+
+    async function fetchMissed(meta) {
+      var newest = meta.newestSeq || 0;
+      var oldest = meta.oldestSeq || 0;
+
+      if (lastSeq > newest) {
+        // meta 是较早的快照，实时批次已经跑到前面；不要因此清空
+        updateMetrics(meta);
+        persistSeq();
+        return;
+      }
+
+      // 新面板没有旧列表，直接补最近一段，而不是从上次保存的序号开始，
+      // 否则会漏掉“上次关闭后到本次打开前”的中间日志。
+      var start = lastSeq ? lastSeq + 1 : Math.max(oldest, newest - INITIAL_TAIL + 1);
+      if (start < oldest) start = oldest;
+      if (start <= 0) start = oldest || 1;
+
+      // 积压太多时优先保证「最近」的日志可见
+      var MAX_BACKFILL = 1500;
+      if (newest - start + 1 > MAX_BACKFILL) {
+        var skipped = newest - start + 1 - MAX_BACKFILL;
+        start = newest - MAX_BACKFILL + 1;
+        setFoot('仅加载最近 ' + MAX_BACKFILL + ' 条（跳过 ' + skipped + ' 条历史）');
+      }
+
+      var cursor = start;
+      var guard = 0;
+      while (connected && cursor <= newest && guard++ < FETCH_GUARD) {
+        var r = await P.logicLayer.call('lv:fetch', cursor, FETCH_PAGE);
+        if (!r || !r.items || !r.items.length) break;
+        ingest(r.items);
+        var last = r.items[r.items.length - 1];
+        if (!last || last.seq < cursor) break;
+        cursor = last.seq + 1;
+      }
+      if (meta.dropped) dropped = Math.max(dropped, meta.dropped);
+      updateMetrics();
+      persistSeq();
+    }
+
+    function loadVConsole() {
+      if (window.VConsole) return Promise.resolve(window.VConsole);
+      if (loadVConsole._p) return loadVConsole._p;
+      if (!P.assets || typeof P.assets.script !== 'function') {
+        return Promise.reject(new Error('assets.script unavailable'));
+      }
+      loadVConsole._p = P.assets.script('assets/vconsole.min.js').then(function (mod) {
+        var VC = window.VConsole ||
+          (mod && mod.VConsole) ||
+          (typeof mod === 'function' ? mod : null) ||
+          (mod && mod.default);
+        if (typeof VC === 'function') return VC;
+        throw new Error('脚本已加载但未导出 VConsole');
+      }).catch(function (e) {
+        loadVConsole._p = null;
+        throw e;
+      });
+      return loadVConsole._p;
+    }
+
+    function createVConsole(VC) {
+      try {
+        vc = new VC({
+          theme: 'light',
+          defaultPlugins: [],
+          disableLogScrolling: false,
+          log: { maxLogNumber: Math.max(1000, opts.maxEntries), showTimestamps: false },
+          onReady: function () {
+            setTimeout(function () {
+              replayVConsole();
+              safe(function () { if (vc) vc.show(); });
+              toast('vConsole 已打开');
+            }, 30);
+          }
+        });
+        vcSeen = Object.create(null);
+        vcActive = true;
+      } catch (e) {
+        vc = null;
+        vcActive = false;
+        toast('vConsole 初始化失败：' + (e && e.message || e));
+      }
+    }
+
+    function startPolling() {
+      if (pollTimer) return;
+      pollTimer = setInterval(pollMeta, 3000);
+    }
+
+    async function pollMeta() {
+      if (!prefsReady || polling || refreshing) return;
+      polling = true;
+      try {
+        var meta = await P.logicLayer.call('lv:meta');
+        var prevApp = appid;
+        var nextApp = meta.appid || '';
+        var metaAt = Number(meta.sessionAt) || 0;
+        if (meta.sessionId && logicSession && meta.sessionId !== logicSession &&
+            metaAt && logicSessionAt && metaAt < logicSessionAt) {
+          return;
+        }
+        var sessionChanged = !!(meta.sessionId && logicSession && meta.sessionId !== logicSession);
+        if (meta.sessionId) logicSession = meta.sessionId;
+        if (metaAt) logicSessionAt = metaAt;
+        if ((prevApp && nextApp && prevApp !== nextApp) || sessionChanged) resetLocal();
+        appid = nextApp || prevApp;
+        if (appid) els.app.textContent = appid;
+        connected = true;
+        setState('已连接', 'ok');
+        if (meta.hooks && meta.hooks.console === false) {
+          try { await P.logicLayer.call('lv:rehook'); } catch (e2) {}
+        }
+        dropped = Math.max(dropped, meta.dropped || 0);
+        if (meta.newestSeq > lastSeq) {
+          await fetchMissed(meta);
+        } else {
+          updateMetrics(meta);
+        }
+      } catch (e) {
+        connected = false;
+        setState('逻辑层不可用', 'bad');
+        setFoot('等待逻辑层恢复…' + (e && e.code ? '（' + e.code + '）' : ''));
+      } finally {
+        polling = false;
+      }
+    }
+
+    function openVConsole() {
+      if (vc) {
+        safe(function () { vc.show(); });
+        return;
+      }
+      if (window.VConsole && window.VConsole.instance) {
+        vc = window.VConsole.instance;
+        vcActive = true;
+        safe(function () { vc.show(); });
+        return;
+      }
+      toast('正在加载 vConsole…');
+      loadVConsole().then(function (VC) {
+        if (window.VConsole && window.VConsole.instance) {
+          vc = window.VConsole.instance;
+          vcActive = true;
+          safe(function () { vc.show(); });
+          return;
+        }
+        createVConsole(VC);
+      }, function (e) {
+        toast('vConsole 资源缺失：请用 zip 安装（assets/vconsole.min.js）');
+      });
+    }
+
+    function replayVConsole() {
+      var list = entries.slice(-1000);
+      vcSeen = Object.create(null);
+      for (var i = 0; i < list.length; i++) vcFeed(list[i]);
+    }
+
+    function vcFeed(e) {
+      if (!vcActive || !e || e.seq == null) return;
+      if (vcSeen[e.seq]) return;
+      vcSeen[e.seq] = 1;
+      var src = e.source === 'render' ? 'R' : (e.source === 'host' ? 'H' : 'L');
+      var text = '[' + fmtTime(e.at) + '] [' + src + '][' + (e.kind || 'log') + '] ' + (e.text || '');
+      try {
+        if (e.level === 'error') console.error(text);
+        else if (e.level === 'warn') console.warn(text);
+        else if (e.level === 'debug') console.debug(text);
+        else console.log(text);
+      } catch (x) {}
+    }
+
+    function toText(list) {
+      var out = [];
+      out.push('# WeAppDev 日志 ' + new Date().toISOString() + '  appid=' + (appid || '-') + '  条数=' + list.length);
+      for (var i = 0; i < list.length; i++) {
+        var e = list[i];
+        var line = '[' + fmtTime(e.at) + '] [' + (e.level || '') + '] [' + (e.source || '') + '] [' + (e.kind || '') + '] ';
+        if (e.page) line += '(' + e.page + ') ';
+        line += (e.text || '');
+        out.push(line);
+        if (e.stack) {
+          out.push(e.stack.replace(/^/gm, '    '));
+        }
+      }
+      var s = out.join('\n');
+      if (s.length > 1500000) s = s.slice(0, 1500000) + '\n…(已截断)';
+      return s;
+    }
+
+    function fallbackCopy(text) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.top = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+      if (!ok) throw new Error('copy failed');
+    }
+
+    function copyText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text).catch(function () { fallbackCopy(text); });
+      }
+      return Promise.resolve().then(function () { fallbackCopy(text); });
+    }
+
+    function cacheEls() {
+      els.state = $('lv-state');
+      els.app = $('lv-app');
+      els.count = $('lv-count');
+      els.dropped = $('lv-dropped');
+      els.buf = $('lv-buf');
+      els.levels = $('lv-levels');
+      els.kind = $('lv-kind');
+      els.search = $('lv-search');
+      els.follow = $('lv-follow');
+      els.pause = $('lv-pause');
+      els.clear = $('lv-clear');
+      els.copy = $('lv-copy');
+      els.save = $('lv-save');
+      els.vc = $('lv-vc');
+      els.gear = $('lv-gear');
+      els.settings = $('lv-settings');
+      els.setClose = $('lv-set-close');
+      els.optNet = $('opt-net');
+      els.optStorage = $('opt-storage');
+      els.optPage = $('opt-page');
+      els.optMirror = $('opt-mirror');
+      els.optMax = $('opt-max');
+      els.optApply = $('opt-apply');
+      els.optDiag = $('opt-diag');
+      els.optTest = $('opt-test');
+      els.optRender = $('opt-render');
+      els.diag = $('lv-diag');
+      els.list = $('lv-list');
+      els.footLeft = $('lv-foot-left');
+      els.footRight = $('lv-foot-right');
+    }
+
+    function bindUI() {
+      var chips = els.levels.querySelectorAll('.lv-chip');
+      for (var i = 0; i < chips.length; i++) {
+        chips[i].addEventListener('click', function () {
+          var sev = this.getAttribute('data-sev');
+          sevOn[sev] = !sevOn[sev];
+          this.classList.toggle('on', sevOn[sev]);
+          scheduleRebuild();
+        });
+      }
+
+      els.kind.addEventListener('change', function () {
+        kindFilter = els.kind.value;
+        scheduleRebuild();
+      });
+
+      els.search.addEventListener('input', function () {
+        if (filterTimer) clearTimeout(filterTimer);
+        var v = els.search.value;
+        filterTimer = setTimeout(function () {
+          filterTimer = null;
+          setQuery(v);
+          rebuild();
+        }, 150);
+      });
+
+      els.follow.addEventListener('click', function () {
+        follow = !follow;
+        els.follow.classList.toggle('on', follow);
+        if (follow) scrollBottom();
+      });
+
+      els.pause.addEventListener('click', function () {
+        paused = !paused;
+        els.pause.textContent = paused ? '继续' : '暂停';
+        els.pause.classList.toggle('on', paused);
+        if (!paused) rebuild();
+      });
+
+      els.clear.addEventListener('click', async function () {
+        var clearThrough = lastSeq;
+        entries = [];
+        bySeq = Object.create(null);
+        lastSeq = 0;
+        dropped = 0;
+        showEmpty('等待日志…');
+        updateMetrics();
+        try {
+          var r = await P.logicLayer.call('lv:clear');
+          if (r && typeof r.newestSeq === 'number' && r.newestSeq > clearThrough) {
+            clearThrough = r.newestSeq;
+          }
+        } catch (e) {}
+        ignoreThrough = Math.max(ignoreThrough, clearThrough);
+        lastSeq = ignoreThrough;
+        persistSeq(true);
+        if (vcActive) {
+          safe(function () { console.clear(); });
+          vcSeen = Object.create(null);
+        }
+        toast('已清空');
+      });
+
+      els.copy.addEventListener('click', function () {
+        var list = filteredEntries();
+        if (!list.length) { toast('没有可复制的日志'); return; }
+        copyText(toText(list)).then(function () {
+          toast('已复制 ' + list.length + ' 条');
+        }, function () {
+          toast('复制失败');
+        });
+      });
+
+      els.save.addEventListener('click', function () {
+        var list = filteredEntries();
+        if (!list.length) { toast('没有可导出的日志'); return; }
+        var text = toText(list);
+        var name = 'weapp-log-' + (appid || 'unknown') + '-' + tsName() + '.txt';
+        try {
+          var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(function () {
+            safe(function () { URL.revokeObjectURL(url); });
+          }, 2000);
+          toast('已导出 ' + list.length + ' 条');
+        } catch (e) {
+          copyText(text).then(function () {
+            toast('下载不可用，已复制到剪贴板');
+          }, function () {
+            toast('导出失败');
+          });
+        }
+      });
+
+      els.vc.addEventListener('click', openVConsole);
+
+      els.gear.addEventListener('click', function () {
+        els.settings.hidden = !els.settings.hidden;
+        els.gear.classList.toggle('on', !els.settings.hidden);
+        if (!els.settings.hidden) safe(function () { els.settings.scrollTop = 0; });
+      });
+
+      els.setClose.addEventListener('click', function () {
+        els.settings.hidden = true;
+        els.gear.classList.remove('on');
+      });
+
+      els.optApply.addEventListener('click', async function () {
+        opts = normalizeOpts({
+          maxEntries: els.optMax.value,
+          captureNetwork: els.optNet.checked,
+          captureStorage: els.optStorage.checked,
+          pageMarkers: els.optPage.checked,
+          mirror: els.optMirror.checked
+        });
+        try {
+          var r = await P.logicLayer.call('lv:setOptions', opts);
+          if (r) opts = normalizeOpts(r);
+          await P.storage.set('opts', opts);
+          prefsLoaded = true;
+          fillOptsUI();
+          while (entries.length > opts.maxEntries) {
+            var old = entries.shift();
+            if (old) delete bySeq[old.seq];
+          }
+          updateMetrics();
+          toast('设置已应用');
+        } catch (e) {
+          toast('应用失败：' + (e && (e.code || e.message) || e));
+        }
+      });
+
+      els.optDiag.addEventListener('click', async function () {
+        try {
+          var d = await P.logicLayer.call('lv:diag');
+          if (d && typeof d === 'object') {
+            var lvEl = document.getElementById('lv');
+            d.panel = {
+              innerWidth: window.innerWidth,
+              innerHeight: window.innerHeight,
+              lvHeight: lvEl ? Math.round(lvEl.getBoundingClientRect().height) : 0,
+              listClientHeight: els.list.clientHeight,
+              listScrollHeight: els.list.scrollHeight,
+              listScrollTop: els.list.scrollTop,
+              bodyScrollHeight: document.body.scrollHeight
+            };
+          }
+          els.diag.hidden = false;
+          els.diag.textContent = safeJson(d, 6000);
+        } catch (e) {
+          els.diag.hidden = false;
+          els.diag.textContent = '诊断失败：' + (e && (e.code || e.message) || e);
+        }
+      });
+
+      els.optTest.addEventListener('click', async function () {
+        try {
+          await P.logicLayer.call('lv:test');
+          toast('已写入测试日志');
+          setTimeout(refreshMeta, 400);
+        } catch (e) {
+          toast('测试失败：' + (e && (e.code || e.message) || e));
+        }
+      });
+
+      els.optRender.addEventListener('click', async function () {
+        try {
+          await P.renderLayer.eval('(function(){console.warn("[lv-test] 渲染层警告");console.log("[lv-test] 渲染层日志",{a:1});return"ok";})()');
+          toast('渲染层测试已执行');
+          setTimeout(refreshMeta, 400);
+        } catch (e) {
+          toast('渲染层不可用（小游戏无 WebView）');
+        }
+      });
+
+      els.list.addEventListener('scroll', function () {
+        var near = els.list.scrollHeight - els.list.scrollTop - els.list.clientHeight < 30;
+        if (near !== follow) {
+          follow = near;
+          els.follow.classList.toggle('on', follow);
+        }
+      });
+    }
+
+    function boot() {
+      cacheEls();
+      bindUI();
+      fillOptsUI();
+      setState('连接中…', 'wait');
+
+      P.ready.then(function () {
+        // 面板默认可能偏小，给日志列表一个稳定的高度；宿主会按屏幕尺寸钳制
+        safe(function () {
+          if (P.ui && typeof P.ui.setSize === 'function') P.ui.setSize(360, 600);
+        });
+        P.on('attach', function () {
+          setTimeout(refreshMeta, 120);
+        });
+        P.on('detach', function () {
+          setState('已断开', 'bad');
+          setFoot('插件已停用或小程序已切换');
+        });
+        P.on('lv:batch', function (d) { onBatch(d); });
+        P.on('lv:session', function (d) { onSession(d); });
+
+        loadPrefs().then(function () {
+          prefsReady = true;
+          refreshMeta();
+        });
+        setTimeout(applyScrollFallback, 200);
+        setTimeout(applyScrollFallback, 600);
+        safe(function () {
+          window.addEventListener('resize', function () {
+            setTimeout(applyScrollFallback, 120);
+          });
+        });
+        startPolling();
+      }, function () {
+        setState('面板未就绪', 'bad');
+      });
+
+      els.vc.title = window.VConsole ? '打开 vConsole' : '需要 zip 安装（assets/vconsole.min.js）';
+    }
+
+    boot();
+  })();
+  </script>
+
+  <script type="text/wad-logic">
+  (function () {
+    'use strict';
+
+    var VERSION = '1.0.2';
+    var CONSOLE_KEY = '__wadLogViewerConsole__';
+    var WX_ERR_KEY = '__wadLogViewerErrors__';
+    var OPT_KEY = 'options';
+    var TOKEN = 'lv-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+    var GEN = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+    var SESSION_AT = Date.now();
+    var FLUSH_MS = 250;
+    var BATCH_BYTES = 60000;
+    var MAX_TEXT = 6000;
+    var MAX_STACK = 3000;
+    var MAX_ARG = 1800;
+    var PENDING_CAP = 1200;
+
+    var options = {
+      maxEntries: 3000,
+      captureNetwork: false,
+      captureStorage: false,
+      pageMarkers: true,
+      mirror: true
+    };
+
+    var entries = [];
+    var seq = 0;
+    var dropped = 0;
+    var pending = [];
+    var flushTimer = null;
+    var active = true;
+    var appid = '';
+    var currentRoute = '';
+    var attachedAt = 0;
+    var lastError = '';
+    var consoleHook = null;
+    var localErrorState = null;
+
+    function safe(fn, def) {
+      try { return fn(); } catch (e) { return def; }
+    }
+
+    function clip(v, n) {
+      v = String(v == null ? '' : v);
+      return v.length > n ? v.slice(0, n) + '…(+' + (v.length - n) + ')' : v;
+    }
+
+    function asBool(v, def) {
+      return typeof v === 'boolean' ? v : def;
+    }
+
+    function loadOptions() {
+      var v = safe(function () { return wadLogicLayer.storage.getSync(OPT_KEY); }, null);
+      if (v && typeof v === 'object') {
+        if (typeof v.maxEntries === 'number' && isFinite(v.maxEntries)) {
+          options.maxEntries = Math.max(200, Math.min(5000, Math.round(v.maxEntries)));
+        }
+        options.captureNetwork = asBool(v.captureNetwork, options.captureNetwork);
+        options.captureStorage = asBool(v.captureStorage, options.captureStorage);
+        options.pageMarkers = asBool(v.pageMarkers, options.pageMarkers);
+        options.mirror = asBool(v.mirror, options.mirror);
+      }
+      if (consoleHook) consoleHook.mirror = options.mirror;
+    }
+
+    function saveOptions() {
+      safe(function () { wadLogicLayer.storage.setSync(OPT_KEY, options); });
+    }
+
+    function copyOptions() {
+      return {
+        maxEntries: options.maxEntries,
+        captureNetwork: options.captureNetwork,
+        captureStorage: options.captureStorage,
+        pageMarkers: options.pageMarkers,
+        mirror: options.mirror
+      };
+    }
+
+    function readRoute() {
+      return safe(function () {
+        var p = wadLogicLayer.page();
+        return p && p.route ? String(p.route) : '';
+      }, '') || '';
+    }
+
+    function ensureRoute() {
+      var r = readRoute();
+      if (r) currentRoute = r;
+      return currentRoute;
+    }
+
+    function stackOf(skip) {
+      var s = safe(function () { return new Error().stack || ''; }, '');
+      if (!s) return '';
+      var lines = s.split('\n');
+      return lines.slice(skip || 2).join('\n');
+    }
+
+    function describe(v, depth, seen) {
+      if (v === null) return 'null';
+      var t = typeof v;
+      if (t === 'undefined') return 'undefined';
+      if (t === 'string') return depth === 0 ? clip(v, MAX_ARG) : JSON.stringify(clip(v, 300));
+      if (t === 'number') return String(v);
+      if (t === 'boolean') return String(v);
+      if (t === 'bigint') return String(v) + 'n';
+      if (t === 'symbol') return safe(function () { return v.toString(); }, 'Symbol()');
+      if (t === 'function') return 'ƒ ' + (v.name || 'anonymous') + '()';
+      if (depth > 3) return Array.isArray(v) ? '[Array]' : '[Object]';
+      if (seen.indexOf(v) >= 0) return '[Circular]';
+      seen.push(v);
+      try {
+        if (v instanceof Error ||
+            (typeof v.stack === 'string' && typeof v.message === 'string' && (v.name || '').indexOf('Error') >= 0)) {
+          return (v.name || 'Error') + ': ' + v.message;
+        }
+        if (Array.isArray(v)) {
+          var a = [];
+          var n = Math.min(v.length, 30);
+          for (var i = 0; i < n; i++) a.push(describe(v[i], depth + 1, seen));
+          if (v.length > n) a.push('… +' + (v.length - n));
+          return '[' + a.join(', ') + ']';
+        }
+        if (typeof ArrayBuffer !== 'undefined' && v instanceof ArrayBuffer) {
+          return 'ArrayBuffer(' + v.byteLength + ')';
+        }
+        if (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView && ArrayBuffer.isView(v)) {
+          var ctor = v.constructor && v.constructor.name || 'TypedArray';
+          return ctor + '(' + (v.length != null ? v.length : v.byteLength) + ')';
+        }
+        if (typeof Map !== 'undefined' && v instanceof Map) {
+          var mp = [];
+          var mi = 0;
+          v.forEach(function (val, key) {
+            if (mi++ < 20) mp.push(describe(key, depth + 1, seen) + ' => ' + describe(val, depth + 1, seen));
+          });
+          if (v.size > 20) mp.push('… +' + (v.size - 20));
+          return 'Map(' + v.size + ') {' + mp.join(', ') + '}';
+        }
+        if (typeof Set !== 'undefined' && v instanceof Set) {
+          var sp = [];
+          var si = 0;
+          v.forEach(function (val) {
+            if (si++ < 20) sp.push(describe(val, depth + 1, seen));
+          });
+          if (v.size > 20) sp.push('… +' + (v.size - 20));
+          return 'Set(' + v.size + ') {' + sp.join(', ') + '}';
+        }
+        if (v instanceof Date) return safe(function () { return v.toISOString(); }, 'Invalid Date');
+        if (v instanceof RegExp) return String(v);
+        var keys = safe(function () { return Object.keys(v); }, []);
+        var out = [];
+        var limit = Math.min(keys.length, 30);
+        for (var k = 0; k < limit; k++) {
+          var key = keys[k];
+          var val = safe(function () { return v[key]; }, '[getter]');
+          out.push(key + ': ' + describe(val, depth + 1, seen));
+        }
+        if (keys.length > limit) out.push('… +' + (keys.length - limit));
+        var cname = safe(function () { return v.constructor && v.constructor.name; }, '');
+        var prefix = cname && cname !== 'Object' ? cname + ' ' : '';
+        return prefix + '{' + out.join(', ') + '}';
+      } catch (e) {
+        return '[unserializable]';
+      } finally {
+        seen.pop();
+      }
+    }
+
+    function formatArgs(args) {
+      var arr = Array.prototype.slice.call(args || []);
+      if (!arr.length) return '';
+      var parts = [];
+      var start = 0;
+      var first = arr[0];
+      if (typeof first === 'string' && /%[sdifoOjc%]/.test(first)) {
+        var idx = 0;
+        var formatted = first.replace(/%([sdifoOjc%])/g, function (m, t) {
+          if (t === '%') return '%';
+          idx++;
+          var v = arr[idx];
+          if (t === 'c') return '';
+          if (t === 's') return describe(v, 0, []);
+          if (t === 'd' || t === 'i') {
+            var n = parseInt(v, 10);
+            return isFinite(n) ? String(n) : 'NaN';
+          }
+          if (t === 'f') {
+            var f = parseFloat(v);
+            return isFinite(f) ? String(f) : 'NaN';
+          }
+          if (t === 'j') return safe(function () { return JSON.stringify(v); }, '[unserializable]');
+          return describe(v, 0, []);
+        });
+        parts.push(formatted);
+        start = idx + 1;
+      }
+      for (var i = start; i < arr.length; i++) parts.push(describe(arr[i], 0, []));
+      return parts.join(' ');
+    }
+
+    function consoleEntry(level, args) {
+      var arr = Array.prototype.slice.call(args || []);
+      var text = formatArgs(arr);
+      var stack = '';
+      for (var i = 0; i < arr.length; i++) {
+        var v = arr[i];
+        if (v && typeof v === 'object' && typeof v.stack === 'string' &&
+            ((v.name || '').indexOf('Error') >= 0 || v instanceof Error)) {
+          stack = v.stack;
+          break;
+        }
+      }
+      if (!stack && (level === 'warn' || level === 'error' || level === 'trace')) {
+        stack = stackOf(2);
+      }
+      if (level === 'dir' || level === 'table') level = 'log';
+      if (level === 'trace') level = 'debug';
+      push(level, 'console', 'logic', text, { stack: stack });
+    }
+
+    function push(level, kind, source, text, extra) {
+      if (!active) return null;
+      var e = {
+        seq: ++seq,
+        at: Date.now(),
+        level: level || 'log',
+        kind: kind || 'console',
+        source: source || 'logic',
+        text: clip(text, MAX_TEXT),
+        page: currentRoute || ''
+      };
+      extra = extra || {};
+      if (extra.page) e.page = clip(extra.page, 300);
+      if (extra.stack) e.stack = clip(extra.stack, MAX_STACK);
+      if (extra.meta) e.meta = extra.meta;
+      entries.push(e);
+      while (entries.length > options.maxEntries) {
+        entries.shift();
+        dropped++;
+      }
+      pending.push(e);
+      while (pending.length > PENDING_CAP) pending.shift();
+      scheduleFlush();
+      return e;
+    }
+
+    function scheduleFlush() {
+      if (flushTimer) return;
+      flushTimer = setTimeout(function () {
+        flushTimer = null;
+        flush();
+      }, FLUSH_MS);
+    }
+
+    function flush() {
+      if (!pending.length) return;
+      var out = [];
+      var bytes = 0;
+      while (pending.length) {
+        var e = pending[0];
+        var size = safe(function () { return JSON.stringify(e).length; }, (e.text || '').length + 200);
+        if (out.length && bytes + size > BATCH_BYTES) break;
+        out.push(pending.shift());
+        bytes += size;
+      }
+      if (!out.length) return;
+      var payload = {
+        appid: appid,
+        sessionId: TOKEN,
+        sessionAt: SESSION_AT,
+        items: out,
+        newestSeq: seq,
+        dropped: dropped
+      };
+      try {
+        var r = wadLogicLayer.emit('lv:batch', payload);
+        if (r && typeof r.then === 'function') {
+          r.then(null, function (err) {
+            lastError = String(err && err.message || err);
+          });
+        }
+      } catch (err) {
+        lastError = String(err && err.message || err);
+      }
+      if (pending.length) scheduleFlush();
+    }
+
+    function define(obj, key, value) {
+      try {
+        Object.defineProperty(obj, key, { value: value, configurable: true, writable: true });
+        return true;
+      } catch (e) {
+        try { obj[key] = value; return true; } catch (e2) { return false; }
+      }
+    }
+
+    function currentConsoleHook() {
+      var c = safe(function () { return console; }, null);
+      return c && c[CONSOLE_KEY];
+    }
+
+    function wrapConsoleMethod(level, orig) {
+      return function () {
+        var h = currentConsoleHook();
+        if (h && h.active && h.sink) {
+          try { h.sink(level, arguments); } catch (e) { lastError = String(e && e.message || e); }
+        }
+        if (h && h.mirror === false) return;
+        if (typeof orig === 'function') return orig.apply(this, arguments);
+      };
+    }
+
+    var LOG_METHODS = ['log', 'info', 'warn', 'error', 'debug', 'dir', 'table', 'trace'];
+
+    function installConsole() {
+      var c = safe(function () { return console; }, null);
+      if (!c) return false;
+      var hook = c[CONSOLE_KEY];
+      if (hook && hook.__wadLogViewer === true && hook.gen > GEN) {
+        // 已经有更新的注入实例在管理 hook，旧实例只读，不抢所有权
+        consoleHook = hook;
+        return true;
+      }
+      if (!hook || hook.__wadLogViewer !== true) {
+        hook = {
+          __wadLogViewer: true,
+          version: VERSION,
+          gen: GEN,
+          token: TOKEN,
+          active: true,
+          mirror: options.mirror,
+          orig: {},
+          wrappers: {},
+          sink: function (level, args) { consoleEntry(level, args); },
+          timeMarks: {}
+        };
+        for (var i = 0; i < LOG_METHODS.length; i++) {
+          var level = LOG_METHODS[i];
+          var orig = c[level];
+          if (typeof orig !== 'function') continue;
+          if (orig.__wadLogViewerHook) orig.__wadLogViewerHook.active = false;
+          var w = wrapConsoleMethod(level, orig);
+          w.__wadLogViewerHook = hook;
+          hook.orig[level] = orig;
+          hook.wrappers[level] = w;
+          define(c, level, w);
+        }
+        if (typeof c.assert === 'function') {
+          var oa = c.assert;
+          var wa = function (cond) {
+            var h = currentConsoleHook();
+            if (h && h.active && h.sink && !cond) {
+              var rest = Array.prototype.slice.call(arguments, 1);
+              if (!rest.length) rest = ['Assertion failed'];
+              try { h.sink('error', rest); } catch (e) {}
+            }
+            if (h && h.mirror === false) return;
+            if (typeof oa === 'function') return oa.apply(this, arguments);
+          };
+          wa.__wadLogViewerHook = hook;
+          hook.orig.assert = oa;
+          hook.wrappers.assert = wa;
+          define(c, 'assert', wa);
+        }
+        if (typeof c.time === 'function' && typeof c.timeEnd === 'function') {
+          var ot = c.time;
+          var ote = c.timeEnd;
+          var wt = function (label) {
+            var h = currentConsoleHook();
+            if (h && h.active) h.timeMarks[String(label || 'default')] = Date.now();
+            if (h && h.mirror === false) return;
+            return ot.apply(this, arguments);
+          };
+          var wte = function (label) {
+            var h = currentConsoleHook();
+            var key = String(label || 'default');
+            if (h && h.active && h.timeMarks[key]) {
+              var ms = Date.now() - h.timeMarks[key];
+              delete h.timeMarks[key];
+              try { h.sink('debug', [key + ': ' + ms + ' ms']); } catch (e) {}
+            }
+            if (h && h.mirror === false) return;
+            return ote.apply(this, arguments);
+          };
+          wt.__wadLogViewerHook = hook;
+          wte.__wadLogViewerHook = hook;
+          hook.orig.time = ot;
+          hook.wrappers.time = wt;
+          hook.orig.timeEnd = ote;
+          hook.wrappers.timeEnd = wte;
+          define(c, 'time', wt);
+          define(c, 'timeEnd', wte);
+        }
+        define(c, CONSOLE_KEY, hook);
+      } else {
+        hook.gen = GEN;
+        hook.token = TOKEN;
+        hook.active = true;
+        hook.mirror = options.mirror;
+        hook.sink = function (level, args) { consoleEntry(level, args); };
+        // 只有当前方法确实是被还原成原始函数时才重新包装。
+        // 如果上面还有别的插件的 wrapper，说明我们的 wrapper 仍在链里，不能再套一层。
+        for (var m in hook.wrappers) {
+          if (c[m] === hook.orig[m] && c[m] !== hook.wrappers[m]) {
+            define(c, m, hook.wrappers[m]);
+          }
+        }
+      }
+      consoleHook = hook;
+      return true;
+    }
+
+    function uninstallConsole() {
+      var c = safe(function () { return console; }, null);
+      if (!c) return;
+      var hook = c[CONSOLE_KEY];
+      if (!hook || hook.gen !== GEN) return;
+      hook.active = false;
+      var allOurs = true;
+      for (var m in hook.wrappers) {
+        if (c[m] !== hook.wrappers[m]) {
+          allOurs = false;
+          break;
+        }
+      }
+      if (allOurs) {
+        for (var m2 in hook.wrappers) define(c, m2, hook.orig[m2]);
+        try { delete c[CONSOLE_KEY]; } catch (e) {
+          try { c[CONSOLE_KEY] = undefined; } catch (e2) {}
+        }
+      }
+    }
+
+    function getErrorState() {
+      return safe(function () {
+        return (typeof wx !== 'undefined' && wx[WX_ERR_KEY]) || localErrorState;
+      }, localErrorState);
+    }
+
+    function ensureErrorHooks() {
+      if (typeof wx === 'undefined') return;
+      var d = getErrorState();
+      if (d && d.__wadLogViewer === true && d.gen > GEN) return;
+      if (!d || d.__wadLogViewer !== true) {
+        d = {
+          __wadLogViewer: true,
+          gen: GEN,
+          token: TOKEN,
+          active: true,
+          handlers: null,
+          sinkError: null,
+          sinkReject: null
+        };
+        var ok = false;
+        try {
+          Object.defineProperty(wx, WX_ERR_KEY, { value: d, configurable: true, writable: true });
+          ok = true;
+        } catch (e) {
+          try { wx[WX_ERR_KEY] = d; ok = true; } catch (e2) {}
+        }
+        if (!ok) localErrorState = d;
+      }
+      d.gen = GEN;
+      d.token = TOKEN;
+      d.active = true;
+      d.sinkError = function (err) {
+        if (!active) return;
+        var msg = '';
+        var stack = '';
+        if (err && typeof err === 'object') {
+          msg = err.message || err.errMsg || safe(function () { return JSON.stringify(err); }, String(err));
+          stack = err.stack || '';
+        } else {
+          msg = String(err);
+        }
+        push('error', 'exception', 'logic', '未捕获错误: ' + msg, { stack: stack || stackOf(2) });
+      };
+      d.sinkReject = function (res) {
+        if (!active) return;
+        var reason = res && res.reason;
+        var msg = reason && (reason.message || reason.errMsg);
+        if (!msg) msg = safe(function () { return JSON.stringify(reason); }, String(reason));
+        var stack = reason && reason.stack || '';
+        push('error', 'exception', 'logic', '未处理的 Promise 拒绝: ' + msg, { stack: stack || stackOf(2) });
+      };
+      if (!d.handlers) {
+        var handlers = {};
+        if (typeof wx.onError === 'function') {
+          var onErr = function (err) {
+            var x = getErrorState();
+            if (x && x.active && x.sinkError) x.sinkError(err);
+          };
+          safe(function () { wx.onError(onErr); });
+          handlers.error = onErr;
+        }
+        if (typeof wx.onUnhandledRejection === 'function') {
+          var onRej = function (res) {
+            var x = getErrorState();
+            if (x && x.active && x.sinkReject) x.sinkReject(res);
+          };
+          safe(function () { wx.onUnhandledRejection(onRej); });
+          handlers.rejection = onRej;
+        }
+        d.handlers = handlers;
+      }
+    }
+
+    function uninstallErrorHooks() {
+      var d = getErrorState();
+      if (!d || d.gen !== GEN) return;
+      d.active = false;
+      if (!d.handlers) return;
+      var removed = false;
+      if (d.handlers.error && typeof wx.offError === 'function') {
+        safe(function () { wx.offError(d.handlers.error); });
+        removed = true;
+      }
+      if (d.handlers.rejection && typeof wx.offUnhandledRejection === 'function') {
+        safe(function () { wx.offUnhandledRejection(d.handlers.rejection); });
+        removed = true;
+      }
+      if (removed) d.handlers = null;
+    }
+
+    var selfHealTimer = null;
+
+    function ensureConsoleAlive() {
+      var c = safe(function () { return console; }, null);
+      if (!c) return;
+      var h = c[CONSOLE_KEY];
+      // 更新的注入实例在管理 hook，旧实例不要抢
+      if (h && h.__wadLogViewer === true && h.gen > GEN) return;
+      if (!h || h.__wadLogViewer !== true || h.gen !== GEN || !h.active) {
+        installConsole();
+        return;
+      }
+      // marker 还在但某个方法被还原成原始函数：重装
+      for (var m in h.wrappers) {
+        if (c[m] === h.orig[m] && c[m] !== h.wrappers[m]) {
+          installConsole();
+          return;
+        }
+      }
+    }
+
+    function startSelfHeal() {
+      if (selfHealTimer) return;
+      selfHealTimer = setInterval(function () {
+        if (!active) return;
+        ensureConsoleAlive();
+        ensureErrorHooks();
+      }, 2500);
+    }
+
+    function stopSelfHeal() {
+      if (!selfHealTimer) return;
+      clearInterval(selfHealTimer);
+      selfHealTimer = null;
+    }
+
+    function attach(id) {
+      appid = String(id || safe(function () { return wadLogicLayer.appid; }, '') || '');
+      active = true;
+      if (!attachedAt) attachedAt = Date.now();
+      ensureRoute();
+      loadOptions();
+      installConsole();
+      ensureErrorHooks();
+      if (options.pageMarkers) {
+        push('info', 'session', 'host',
+          '插件已注入 · ' + (appid || '(未知 appid)') + (currentRoute ? ' · ' + currentRoute : ''),
+          { meta: { event: 'attach', appid: appid } });
+      }
+      safe(function () {
+        wadLogicLayer.emit('lv:session', {
+          appid: appid,
+          sessionId: TOKEN,
+          sessionAt: SESSION_AT,
+          at: Date.now()
+        });
+      });
+      startSelfHeal();
+    }
+
+    function meta() {
+      var c = safe(function () { return console; }, null);
+      var hook = c && c[CONSOLE_KEY];
+      var d = getErrorState();
+      return {
+        version: VERSION,
+        appid: appid,
+        sessionId: TOKEN,
+        sessionAt: SESSION_AT,
+        page: currentRoute,
+        attachedAt: attachedAt,
+        oldestSeq: entries.length ? entries[0].seq : 0,
+        newestSeq: seq,
+        count: entries.length,
+        dropped: dropped,
+        options: copyOptions(),
+        hooks: {
+          console: !!(hook && hook.__wadLogViewer === true && hook.active),
+          error: !!(d && d.active && d.handlers && d.handlers.error)
+        },
+        lastError: lastError
+      };
+    }
+
+    loadOptions();
+    appid = String(safe(function () { return wadLogicLayer.appid; }, '') || '');
+    ensureRoute();
+    installConsole();
+    ensureErrorHooks();
+    startSelfHeal();
+
+    wadLogicLayer.register('lv:meta', meta);
+
+    wadLogicLayer.register('lv:rehook', function () {
+      active = true;
+      installConsole();
+      ensureErrorHooks();
+      startSelfHeal();
+      return { ok: true, hooks: meta().hooks };
+    });
+
+    wadLogicLayer.register('lv:fetch', function (fromSeq, limit) {
+      var n = Math.max(1, Math.min(300, Number(limit) || 200));
+      var from = Number(fromSeq) || 0;
+      var out = [];
+      var bytes = 0;
+      for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        if (e.seq < from) continue;
+        var size = safe(function () { return JSON.stringify(e).length; }, (e.text || '').length + 200);
+        if (out.length && bytes + size > BATCH_BYTES) break;
+        out.push(e);
+        bytes += size;
+        if (out.length >= n) break;
+      }
+      return {
+        items: out,
+        oldestSeq: entries.length ? entries[0].seq : 0,
+        newestSeq: seq,
+        dropped: dropped
+      };
+    });
+
+    wadLogicLayer.register('lv:clear', function () {
+      entries = [];
+      pending = [];
+      dropped = 0;
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      return { ok: true, newestSeq: seq };
+    });
+
+    wadLogicLayer.register('lv:setOptions', function (p) {
+      p = p || {};
+      if (p.maxEntries != null) {
+        var n = Number(p.maxEntries);
+        if (isFinite(n)) options.maxEntries = Math.max(200, Math.min(5000, Math.round(n)));
+      }
+      options.captureNetwork = asBool(p.captureNetwork, options.captureNetwork);
+      options.captureStorage = asBool(p.captureStorage, options.captureStorage);
+      options.pageMarkers = asBool(p.pageMarkers, options.pageMarkers);
+      options.mirror = asBool(p.mirror, options.mirror);
+      if (consoleHook) consoleHook.mirror = options.mirror;
+      while (entries.length > options.maxEntries) {
+        entries.shift();
+        dropped++;
+      }
+      saveOptions();
+      return copyOptions();
+    });
+
+    wadLogicLayer.register('lv:getOptions', function () {
+      return copyOptions();
+    });
+
+    wadLogicLayer.register('lv:ingest', function (items) {
+      if (!items || !items.length) return { ok: true, n: 0, newestSeq: seq };
+      var n = 0;
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (!it || !it.text) continue;
+        push(it.level || 'log', it.kind || 'console', 'render', it.text, {
+          page: it.page,
+          stack: it.stack,
+          meta: it.meta
+        });
+        n++;
+      }
+      return { ok: true, n: n, newestSeq: seq };
+    });
+
+    wadLogicLayer.register('lv:diag', function () {
+      return {
+        version: VERSION,
+        appid: appid,
+        page: currentRoute,
+        attachedAt: attachedAt,
+        options: copyOptions(),
+        buffer: {
+          count: entries.length,
+          oldestSeq: entries.length ? entries[0].seq : 0,
+          newestSeq: seq,
+          dropped: dropped,
+          pending: pending.length
+        },
+        hooks: meta().hooks,
+        lastError: lastError,
+        pageApi: safe(function () { return wadLogicLayer.page(); }, null)
+      };
+    });
+
+    wadLogicLayer.register('lv:test', function () {
+      var circular = { name: 'circular' };
+      circular.self = circular;
+      console.log('[lv-test] 普通日志', { hello: 'world', n: 42, list: [1, 2, 3] });
+      console.info('[lv-test] 信息日志 %s / %d', 'format', 7);
+      console.warn('[lv-test] 警告日志', new Date());
+      console.error('[lv-test] 错误日志', new Error('测试错误'));
+      console.debug('[lv-test] 调试日志（默认级别过滤下不显示）');
+      console.log('[lv-test] 循环引用', circular);
+      return { ok: true, seq: seq };
+    });
+
+    wadLogicLayer.onAttach(function (id) { attach(id); });
+
+    wadLogicLayer.onPageChange(function (p) {
+      var route = p && p.route ? String(p.route) : readRoute();
+      if (route) currentRoute = route;
+      if (!options.pageMarkers) return;
+      var optsText = safe(function () { return JSON.stringify(p && p.options || {}); }, '{}');
+      push('info', 'page', 'host',
+        '→ ' + (currentRoute || '(未知路由)') + (optsText && optsText !== '{}' ? ' ' + clip(optsText, 300) : ''),
+        { meta: { route: currentRoute } });
+    });
+
+    wadLogicLayer.onNetwork(function (e) {
+      if (!options.captureNetwork || !e) return;
+      var status = e.status == null ? '' : e.status;
+      var level = (typeof status === 'number' && status >= 400) ? 'warn' : 'debug';
+      push(level, 'net', 'host',
+        (e.method || 'GET') + ' ' + status + ' ' + (e.url || ''),
+        { meta: { id: e.id, method: e.method, status: e.status, kind: e.kind, at: e.at, ws: e.ws } });
+    });
+
+    wadLogicLayer.onStorageWrite(function (e) {
+      if (!options.captureStorage || !e) return;
+      var text = e.op + ' ' + e.key;
+      if (e.op === 'set' && e.value !== undefined) {
+        text += ' = ' + clip(describe(e.value, 0, []), 300);
+      }
+      push('debug', 'storage', 'host', text, { meta: { op: e.op, key: e.key } });
+    });
+
+    wadLogicLayer.onDetach(function () {
+      flush();
+      active = false;
+      stopSelfHeal();
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      uninstallConsole();
+      uninstallErrorHooks();
+      consoleHook = null;
+    });
+  })();
+  </script>
+
+  <script type="text/wad-render">
+  (function () {
+    'use strict';
+
+    var VERSION = '1.0.2';
+    var KEY = '__wadLogViewerRender__';
+    var TOKEN = 'lvr-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+    var GEN = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+    var FLUSH_MS = 300;
+    var BATCH_BYTES = 30000;
+    var MAX_TEXT = 4000;
+    var MAX_STACK = 2500;
+    var MAX_ARG = 1500;
+
+    var pending = [];
+    var timer = null;
+    var active = true;
+    var hook = null;
+    var failure = 0;
+    var mirror = true;
+
+    function safe(fn, def) {
+      try { return fn(); } catch (e) { return def; }
+    }
+
+    function clip(v, n) {
+      v = String(v == null ? '' : v);
+      return v.length > n ? v.slice(0, n) + '…(+' + (v.length - n) + ')' : v;
+    }
+
+    function describe(v, depth, seen) {
+      if (v === null) return 'null';
+      var t = typeof v;
+      if (t === 'undefined') return 'undefined';
+      if (t === 'string') return depth === 0 ? clip(v, MAX_ARG) : JSON.stringify(clip(v, 300));
+      if (t === 'number' || t === 'boolean') return String(v);
+      if (t === 'bigint') return String(v) + 'n';
+      if (t === 'symbol') return safe(function () { return v.toString(); }, 'Symbol()');
+      if (t === 'function') return 'ƒ ' + (v.name || 'anonymous') + '()';
+      if (depth > 3) return Array.isArray(v) ? '[Array]' : '[Object]';
+      if (seen.indexOf(v) >= 0) return '[Circular]';
+      seen.push(v);
+      try {
+        if (v instanceof Error ||
+            (typeof v.stack === 'string' && typeof v.message === 'string' && (v.name || '').indexOf('Error') >= 0)) {
+          return (v.name || 'Error') + ': ' + v.message;
+        }
+        if (Array.isArray(v)) {
+          var a = [];
+          var n = Math.min(v.length, 30);
+          for (var i = 0; i < n; i++) a.push(describe(v[i], depth + 1, seen));
+          if (v.length > n) a.push('… +' + (v.length - n));
+          return '[' + a.join(', ') + ']';
+        }
+        if (typeof ArrayBuffer !== 'undefined' && v instanceof ArrayBuffer) return 'ArrayBuffer(' + v.byteLength + ')';
+        if (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView && ArrayBuffer.isView(v)) {
+          var ctor = v.constructor && v.constructor.name || 'TypedArray';
+          return ctor + '(' + (v.length != null ? v.length : v.byteLength) + ')';
+        }
+        if (v instanceof Date) return safe(function () { return v.toISOString(); }, 'Invalid Date');
+        if (v instanceof RegExp) return String(v);
+        var keys = safe(function () { return Object.keys(v); }, []);
+        var out = [];
+        var limit = Math.min(keys.length, 30);
+        for (var k = 0; k < limit; k++) {
+          var key = keys[k];
+          var val = safe(function () { return v[key]; }, '[getter]');
+          out.push(key + ': ' + describe(val, depth + 1, seen));
+        }
+        if (keys.length > limit) out.push('… +' + (keys.length - limit));
+        var cname = safe(function () { return v.constructor && v.constructor.name; }, '');
+        var prefix = cname && cname !== 'Object' ? cname + ' ' : '';
+        return prefix + '{' + out.join(', ') + '}';
+      } catch (e) {
+        return '[unserializable]';
+      } finally {
+        seen.pop();
+      }
+    }
+
+    function formatArgs(args) {
+      var arr = Array.prototype.slice.call(args || []);
+      if (!arr.length) return '';
+      var parts = [];
+      var start = 0;
+      var first = arr[0];
+      if (typeof first === 'string' && /%[sdifoOjc%]/.test(first)) {
+        var idx = 0;
+        var formatted = first.replace(/%([sdifoOjc%])/g, function (m, t) {
+          if (t === '%') return '%';
+          idx++;
+          var v = arr[idx];
+          if (t === 'c') return '';
+          if (t === 's') return describe(v, 0, []);
+          if (t === 'd' || t === 'i') {
+            var n = parseInt(v, 10);
+            return isFinite(n) ? String(n) : 'NaN';
+          }
+          if (t === 'f') {
+            var f = parseFloat(v);
+            return isFinite(f) ? String(f) : 'NaN';
+          }
+          if (t === 'j') return safe(function () { return JSON.stringify(v); }, '[unserializable]');
+          return describe(v, 0, []);
+        });
+        parts.push(formatted);
+        start = idx + 1;
+      }
+      for (var i = start; i < arr.length; i++) parts.push(describe(arr[i], 0, []));
+      return parts.join(' ');
+    }
+
+    function push(level, args, extra) {
+      if (!active) return;
+      var arr = Array.prototype.slice.call(args || []);
+      var text = formatArgs(arr);
+      var foundStack = '';
+      for (var i = 0; i < arr.length; i++) {
+        var v = arr[i];
+        if (v && typeof v === 'object' && typeof v.stack === 'string' &&
+            ((v.name || '').indexOf('Error') >= 0 || v instanceof Error)) {
+          foundStack = v.stack;
+          break;
+        }
+      }
+      var it = {
+        at: Date.now(),
+        level: level || 'log',
+        kind: 'console',
+        source: 'render',
+        text: clip(text, MAX_TEXT),
+        page: safe(function () { return location.href; }, '')
+      };
+      extra = extra || {};
+      if (!extra.stack && foundStack) extra.stack = foundStack;
+      if (extra.stack) it.stack = clip(extra.stack, MAX_STACK);
+      if (extra.meta) it.meta = extra.meta;
+      if (extra.page) it.page = clip(extra.page, 300);
+      if (extra.kind) it.kind = extra.kind;
+      pending.push(it);
+      while (pending.length > 500) pending.shift();
+      schedule();
+    }
+
+    function schedule() {
+      if (timer) return;
+      timer = setTimeout(function () {
+        timer = null;
+        flush();
+      }, FLUSH_MS);
+    }
+
+    function flush() {
+      if (!pending.length) return;
+      var items = [];
+      var bytes = 0;
+      while (pending.length) {
+        var it = pending[0];
+        var size = safe(function () { return JSON.stringify(it).length; }, (it.text || '').length + 150);
+        if (items.length && bytes + size > BATCH_BYTES) break;
+        items.push(pending.shift());
+        bytes += size;
+      }
+      if (!items.length) return;
+      var p;
+      try {
+        p = wadRenderLayer.logicLayer.call('lv:ingest', items);
+      } catch (e) {
+        retry(items);
+        return;
+      }
+      if (p && typeof p.then === 'function') {
+        p.then(function (r) {
+          if (!r || !r.ok) retry(items);
+          else failure = 0;
+        }, function () {
+          retry(items);
+        });
+      }
+      if (pending.length) schedule();
+    }
+
+    function retry(items) {
+      failure++;
+      if (failure > 5) {
+        failure = 0;
+        return;
+      }
+      pending = items.concat(pending);
+      if (pending.length > 500) pending = pending.slice(-500);
+      setTimeout(schedule, Math.min(2000, 200 * failure));
+    }
+
+    function define(obj, key, value) {
+      try {
+        Object.defineProperty(obj, key, { value: value, configurable: true, writable: true });
+        return true;
+      } catch (e) {
+        try { obj[key] = value; return true; } catch (e2) { return false; }
+      }
+    }
+
+    function wrapMethod(level) {
+      return function () {
+        var h = hook;
+        if (h && h.active && h.sink) {
+          try { h.sink(level, arguments); } catch (e) {}
+        }
+        if (h && h.mirror !== false && typeof h.orig[level] === 'function') {
+          return h.orig[level].apply(this, arguments);
+        }
+      };
+    }
+
+    var METHODS = ['log', 'info', 'warn', 'error', 'debug', 'dir', 'table', 'trace'];
+
+    function installListeners(h) {
+      if (h.listeners) {
+        if (h.listeners.error) safe(function () { window.removeEventListener('error', h.listeners.error, true); });
+        if (h.listeners.rejection) safe(function () { window.removeEventListener('unhandledrejection', h.listeners.rejection); });
+        if (h.listeners.hide) safe(function () { window.removeEventListener('pagehide', h.listeners.hide); });
+        h.listeners = null;
+      }
+      var onError = function (ev) {
+        if (!active) return;
+        if (ev && ev.target && ev.target !== window && !ev.message) return;
+        var msg = ev && ev.message || 'unknown error';
+        push('error', [msg], {
+          stack: ev && ev.error && ev.error.stack || '',
+          page: safe(function () { return location.href; }, ''),
+          kind: 'exception',
+          meta: { filename: ev && ev.filename, lineno: ev && ev.lineno, colno: ev && ev.colno }
+        });
+      };
+      var onRejection = function (ev) {
+        if (!active) return;
+        var r = ev && ev.reason;
+        var msg = r && (r.message || r.errMsg);
+        if (!msg) msg = safe(function () { return String(r); }, String(r));
+        push('error', ['Unhandled rejection: ' + msg], {
+          stack: r && r.stack || '',
+          page: safe(function () { return location.href; }, ''),
+          kind: 'exception'
+        });
+      };
+      var onHide = function () { flush(); };
+      safe(function () { window.addEventListener('error', onError, true); });
+      safe(function () { window.addEventListener('unhandledrejection', onRejection); });
+      safe(function () { window.addEventListener('pagehide', onHide); });
+      h.listeners = { error: onError, rejection: onRejection, hide: onHide };
+      return h.listeners;
+    }
+
+    function install() {
+      active = true;
+      var c = safe(function () { return window.console; }, null);
+      if (!c) return;
+      var h = window[KEY];
+      if (h && h.__wadLogViewer === true && h.gen > GEN) {
+        hook = h;
+        return;
+      }
+      if (!h || h.__wadLogViewer !== true) {
+        h = {
+          __wadLogViewer: true,
+          version: VERSION,
+          gen: GEN,
+          token: TOKEN,
+          active: true,
+          mirror: mirror,
+          orig: {},
+          wrappers: {},
+          sink: function (level, args) { push(level, args); },
+          listeners: null
+        };
+        for (var i = 0; i < METHODS.length; i++) {
+          var level = METHODS[i];
+          var orig = c[level];
+          if (typeof orig !== 'function') continue;
+          if (orig.__wadLogViewerHook) orig.__wadLogViewerHook.active = false;
+          var w = wrapMethod(level);
+          w.__wadLogViewerHook = h;
+          h.orig[level] = orig;
+          h.wrappers[level] = w;
+          define(c, level, w);
+        }
+        define(window, KEY, h);
+        installListeners(h);
+      } else {
+        h.gen = GEN;
+        h.token = TOKEN;
+        h.active = true;
+        h.mirror = mirror;
+        h.sink = function (level, args) { push(level, args); };
+        // 只有当前方法确实回到原始函数时才重新包装，避免和别的插件叠 wrapper
+        for (var m in h.wrappers) {
+          if (c[m] === h.orig[m] && c[m] !== h.wrappers[m]) {
+            define(c, m, h.wrappers[m]);
+          }
+        }
+        installListeners(h);
+      }
+      hook = h;
+    }
+
+    function uninstall() {
+      active = false;
+      var c = safe(function () { return window.console; }, null);
+      var h = safe(function () { return window[KEY]; }, null);
+      if (!c || !h || h.gen !== GEN) return;
+      h.active = false;
+      var allOurs = true;
+      for (var m in h.wrappers) {
+        if (c[m] !== h.wrappers[m]) {
+          allOurs = false;
+          break;
+        }
+      }
+      if (allOurs) {
+        for (var m2 in h.wrappers) define(c, m2, h.orig[m2]);
+        try { delete window[KEY]; } catch (e) {
+          try { window[KEY] = undefined; } catch (e2) {}
+        }
+      }
+      if (h.listeners) {
+        if (h.listeners.error) safe(function () { window.removeEventListener('error', h.listeners.error, true); });
+        if (h.listeners.rejection) safe(function () { window.removeEventListener('unhandledrejection', h.listeners.rejection); });
+        if (h.listeners.hide) safe(function () { window.removeEventListener('pagehide', h.listeners.hide); });
+        h.listeners = null;
+      }
+    }
+
+    install();
+
+    safe(function () {
+      wadRenderLayer.onAttach(function () { install(); });
+      wadRenderLayer.onDetach(function () {
+        active = false;
+        flush();
+        uninstall();
+      });
+    });
+
+    safe(function () {
+      var p = wadRenderLayer.logicLayer.call('lv:getOptions');
+      if (p && typeof p.then === 'function') {
+        p.then(function (o) {
+          if (o && typeof o.mirror === 'boolean') {
+            mirror = o.mirror;
+            if (hook) hook.mirror = mirror;
+          }
+        }, function () {});
+      }
+    });
+  })();
+  </script>
+
+  <script type="text/markdown">
+# 日志查看器
+
+一个小程序/小游戏日志查看器插件：抓逻辑层与渲染层的 console、未捕获异常、页面路由、网络摘要和 Storage 写入，面板内过滤、搜索、复制、导出；内置可选的 vConsole 视图。
+
+> 第三方插件，非 WeAppDev 官方项目。
+
+## 能力
+
+- 逻辑层 console：log / info / warn / error / debug / dir / table / trace / assert / time / timeEnd，支持 `%s %d %i %f %o %O %j %c` 格式符。
+- 渲染层 console 与 window error / unhandledrejection（小程序有 WebView 时）。
+- 逻辑层 `wx.onError` / `wx.onUnhandledRejection`。
+- 页面路由标记、网络摘要（默认关闭）、Storage 写入（默认关闭）。
+- 缓冲区默认 3000 条，批量 250ms 推送到面板；面板关闭期间日志仍在逻辑层内存里，重开面板会补拉。
+- vConsole 3.15.1（MIT）作为可选视图：点「vConsole」按钮后，把已抓到的日志喂给 vConsole 的 Log 面板。
+- vConsole 脚本约 286KB，超过宿主单内联脚本 256KB 的上限，所以放在 zip 的 `assets/vconsole.min.js`，面板用 `wadPanelLayer.assets.script()` 按需加载。
+
+## 安装
+
+- 推荐：用 `log-viewer.zip` 在「插件 → + → 选择文件 / zip」安装。zip 内含 `assets/vconsole.min.js`，vConsole 按钮可用。
+- 单文件：把 `log-viewer.html` 粘贴到「+ → 粘贴 HTML」。内置日志查看器可用，但单 HTML 没有资产目录，vConsole 按钮会提示改用 zip 安装。
+
+### 远程安装（GitHub）
+
+如果客户端只支持远程 URL，用下面任意一个：
+
+- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.2/log-viewer.zip`
+- Raw zip：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.zip`
+- 单文件 HTML（无 vConsole）：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.html`
+
+## 使用
+
+打开小程序 → 右上角「⋯」→ 插件 → 启用「日志查看器」→ 打开面板。点「设置 → 测试日志」可以验证 hook 是否生效。
+
+## 限制与注意事项
+
+- 插件逻辑层/渲染层注入依赖调试通道；关闭调试后面板仍可打开，但 logic/render 不工作。
+- console hook 在插件注入时安装；注入前已经执行的启动日志可能抓不到，这类日志请用 Chrome DevTools 看。
+- 业务代码如果提前缓存了 `console.log` 的引用，或日志由 native/WASM 直接输出，hook 抓不到。
+- 渲染层只在小程序里有 WebView；小游戏是 canvas，没有渲染层日志。
+- 宿主对单个内联脚本有 256KB 上限；本插件所有内联脚本都低于该值，vConsole 走 zip 资产（单资产上限 4MB）。
+- 单条总线消息有 200KB/256KB 限制，插件按 60KB/30KB 分批；每条日志文本与调用栈会截断。
+- 面板重开或恢复时最多补拉最近 1500 条日志，避免一次性拉爆总线；更早的日志请及时导出。
+- 「暂停」只冻结内置列表，采集和 vConsole 视图仍继续更新。
+- 插件重注入/切换小程序时按 sessionId 隔离；旧会话延迟到达的批次不会混入新会话。
+- 日志可能含 token、手机号等敏感信息，本插件不上传任何数据；导出前请自行确认。
+- vConsole 只能看到它所在面板 WebView 的 console；逻辑层日志是本插件 hook 后转发进去的。vConsole 的 System/Network/Element 面板对小程序无意义，已关闭。
+
+## 开发
+
+```bash
+node build.mjs   # 生成 log-viewer.html、README.md、dist/ 和 log-viewer.zip
+node verify.mjs  # Node mock 测试逻辑层/渲染层采集
+```
+
+`assets/vconsole.min.js` 是 vConsole 3.15.1（MIT），由面板按需加载。
+
+## 版本
+
+1.0.2 — 增加逻辑层 hook 自愈与面板 3 秒轮询补拉，修复长时间运行后日志突然中断；面板过矮时整面板滚动。
+1.0.1 — 面板改为视口固定布局，修复浮窗/短面板内无法滚动；vConsole 改为 zip 资产按需加载。
+1.0.0 — 初版。
+  </script>
+</body>
+</html>

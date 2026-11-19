@@ -1,0 +1,129 @@
+<script>
+(function () {
+  'use strict';
+  var handlers = {};
+  var seq = 0;
+  var mockEntries = [];
+  var opts = { maxEntries: 3000, captureNetwork: false, captureStorage: false, pageMarkers: true, mirror: true };
+  function emit(name, data) {
+    var arr = handlers[name] || [];
+    for (var i = 0; i < arr.length; i++) {
+      try { arr[i](data); } catch (e) { console.error(e); }
+    }
+  }
+  window.__mockEmit = emit;
+
+  function toast(t) {
+    var d = document.createElement('div');
+    d.textContent = String(t);
+    d.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:99999;background:#111;color:#fff;padding:6px 10px;border-radius:6px;font:12px sans-serif;opacity:.92';
+    document.body.appendChild(d);
+    setTimeout(function () { d.remove(); }, 1800);
+  }
+
+  window.wadPanelLayer = {
+    ready: Promise.resolve(),
+    connected: function () { return true; },
+    on: function (name, fn) {
+      (handlers[name] || (handlers[name] = [])).push(fn);
+      return function () {};
+    },
+    off: function () {},
+    logicLayer: {
+      call: function (name) {
+        var args = Array.prototype.slice.call(arguments, 1);
+        if (name === 'lv:meta') {
+          return Promise.resolve({
+            version: '1.0.0', appid: 'wx-demo-123456', sessionId: 'sess-1', sessionAt: 1000,
+            page: 'pages/index/index', attachedAt: Date.now(),
+            oldestSeq: mockEntries.length ? mockEntries[0].seq : 0,
+            newestSeq: seq, count: mockEntries.length, dropped: 0,
+            options: opts, hooks: { console: true, error: true }, lastError: ''
+          });
+        }
+        if (name === 'lv:fetch') {
+          var after = Number(args[0]) || 0;
+          var limit = Number(args[1]) || 200;
+          var items = mockEntries.filter(function (e) { return e.seq >= after; }).slice(0, limit);
+          return Promise.resolve({
+            items: items,
+            oldestSeq: mockEntries.length ? mockEntries[0].seq : 0,
+            newestSeq: seq,
+            dropped: 0
+          });
+        }
+        if (name === 'lv:setOptions') {
+          Object.assign(opts, args[0] || {});
+          return Promise.resolve(opts);
+        }
+        if (name === 'lv:clear') {
+          mockEntries = [];
+          return Promise.resolve({ ok: true, newestSeq: seq });
+        }
+        if (name === 'lv:diag') {
+          return Promise.resolve({
+            version: '1.0.0', appid: 'wx-demo-123456',
+            hooks: { console: true, error: true }, options: opts,
+            buffer: { count: 12, oldestSeq: 1, newestSeq: seq, dropped: 0, pending: 0 },
+            pageApi: { route: 'pages/index/index' }
+          });
+        }
+        if (name === 'lv:test') return Promise.resolve({ ok: true, seq: seq });
+        return Promise.resolve({ ok: true });
+      },
+      page: function () { return { route: 'pages/index/index', options: {} }; },
+      storage: { get: function () { return Promise.resolve(undefined); }, set: function () { return Promise.resolve(); } },
+      ui: { toast: toast }
+    },
+    renderLayer: { eval: function () { return Promise.resolve('ok'); } },
+    assets: {
+      script: function (p) {
+        return new Promise(function (resolve, reject) {
+          var s = document.createElement('script');
+          s.src = p;
+          s.onload = function () { resolve(window.VConsole); };
+          s.onerror = function () { reject(new Error('HTTP 404 ' + p)); };
+          document.head.appendChild(s);
+        });
+      }
+    },
+    storage: { get: function () { return Promise.resolve(undefined); }, set: function () { return Promise.resolve(); } },
+    localStorage: window.localStorage,
+    sessionStorage: window.sessionStorage,
+    ui: { toast: toast },
+    instance: function () { return { appid: 'wx-demo-123456' }; }
+  };
+
+  setTimeout(function () {
+    seq = 12;
+    var now = Date.now();
+    var items = [
+      { seq: 1, at: now - 9000, level: 'info', kind: 'session', source: 'host', page: 'pages/index/index', text: '插件已注入 · wx-demo-123456 · pages/index/index', meta: { event: 'attach' } },
+      { seq: 2, at: now - 8000, level: 'log', kind: 'console', source: 'logic', page: 'pages/index/index', text: 'hello {a: 1, list: [1, 2, 3]}' },
+      { seq: 3, at: now - 7000, level: 'info', kind: 'page', source: 'host', page: 'pages/detail/detail', text: '→ pages/detail/detail {"id":42}' },
+      { seq: 4, at: now - 6000, level: 'warn', kind: 'console', source: 'logic', page: 'pages/detail/detail', text: '警告日志 Error: 库存不足' },
+      { seq: 5, at: now - 5000, level: 'error', kind: 'console', source: 'logic', page: 'pages/detail/detail', text: '错误日志 Error: 请求失败', stack: 'Error: 请求失败\n    at request (app.js:123)\n    at usr (app.js:456)' },
+      { seq: 6, at: now - 4000, level: 'debug', kind: 'net', source: 'host', page: 'pages/detail/detail', text: 'GET 200 https://api.example.com/v1/user', meta: { method: 'GET', status: 200 } },
+      { seq: 7, at: now - 3000, level: 'warn', kind: 'net', source: 'host', page: 'pages/detail/detail', text: 'POST 500 https://api.example.com/v1/order', meta: { method: 'POST', status: 500 } },
+      { seq: 8, at: now - 2000, level: 'debug', kind: 'storage', source: 'host', page: 'pages/detail/detail', text: 'set token = "***"' },
+      { seq: 9, at: now - 1500, level: 'error', kind: 'exception', source: 'logic', page: 'pages/detail/detail', text: '未捕获错误: Cannot read properties of undefined', stack: 'TypeError: Cannot read properties of undefined\n    at onClick (app.js:99)' },
+      { seq: 10, at: now - 1000, level: 'log', kind: 'console', source: 'render', page: 'https://usr/page.html', text: '[lv-test] 渲染层日志 {a: 1}' },
+      { seq: 11, at: now - 500, level: 'info', kind: 'console', source: 'logic', page: 'pages/detail/detail', text: '[lv-test] 信息日志 format / 7' },
+      { seq: 12, at: now, level: 'error', kind: 'console', source: 'logic', page: 'pages/detail/detail', text: '[lv-test] 错误日志 Error: 测试错误', stack: 'Error: 测试错误\n    at lvTest (plugin.js:1)' }
+    ];
+    mockEntries = items.slice();
+    emit('lv:batch', { appid: 'wx-demo-123456', sessionId: 'sess-1', sessionAt: 1000, items: items, newestSeq: 12, dropped: 0 });
+  }, 600);
+
+  window.__mockInjectSilent = function (text) {
+    seq++;
+    var e = {
+      seq: seq, at: Date.now(), level: 'info', kind: 'console', source: 'logic',
+      page: 'pages/detail/detail', text: text || ('silent-' + seq)
+    };
+    mockEntries.push(e);
+    if (mockEntries.length > 3000) mockEntries.shift();
+    return e;
+  };
+})();
+</script>

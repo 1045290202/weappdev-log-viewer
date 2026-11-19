@@ -1,0 +1,5 @@
+dist/
+preview.html
+preview-panel.png
+node_modules/
+.DS_Store

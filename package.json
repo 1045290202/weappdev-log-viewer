@@ -1,0 +1,11 @@
+{
+  "name": "weappdev-log-viewer",
+  "version": "1.0.2",
+  "private": true,
+  "type": "module",
+  "description": "WeAppDev 小程序/小游戏日志查看器插件（console、异常、路由、网络、Storage，可选 vConsole）",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node verify.mjs"
+  }
+}
