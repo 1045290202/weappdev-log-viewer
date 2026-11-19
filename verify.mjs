@@ -197,7 +197,7 @@ async function testLogic() {
 
   // 诊断
   const diag = registered.get('lv:diag')();
-  assert.equal(diag.version, '1.0.4', 'diag version');
+  assert.equal(diag.version, '1.0.5', 'diag version');
   assert.equal(diag.hooks.console, true, 'diag console hook');
   assert.equal(diag.hooks.error, true, 'diag error hook');
 
@@ -411,7 +411,7 @@ async function testGameBridge() {
   const gameSandbox = { GameGlobal: {}, console: gameConsole.consoleObj, Date, JSON, Math };
   const gameCtx = vm.createContext(gameSandbox);
   const status = vm.runInContext(patchExpr, gameCtx, { filename: 'game-patch.js' });
-  assert.equal(status, 'patched:8', 'game patch status');
+  assert.match(status, /^patched:8(?:\+0)?$/, 'game patch status');
 
   gameConsole.consoleObj.log('hello', { a: 1 });
   gameConsole.consoleObj.error(new Error('oops'));

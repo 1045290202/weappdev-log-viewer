@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="wad:package" content="log-viewer">
   <meta name="wad:name" content="日志查看器">
-  <meta name="wad:version" content="1.0.4">
-  <meta name="wad:versionCode" content="5">
+  <meta name="wad:version" content="1.0.5">
+  <meta name="wad:versionCode" content="6">
   <meta name="wad:author" content="WeAppDev Plugin">
   <meta name="wad:description" content="捕获小程序/小游戏逻辑层与渲染层 console、未捕获异常、页面路由、网络摘要与 Storage 写入；支持过滤、搜索、复制、导出，并内置可选的 vConsole 视图。">
   <style>
@@ -1316,7 +1316,7 @@
   (function () {
     'use strict';
 
-    var VERSION = '1.0.4';
+    var VERSION = '1.0.5';
     var CONSOLE_KEY = '__wadLogViewerConsole__';
     var WX_ERR_KEY = '__wadLogViewerErrors__';
     var OPT_KEY = 'options';
@@ -1932,59 +1932,101 @@
         if (typeof console === "undefined") return "no-console";
         if (!Array.isArray(g.__wadLVLogs)) g.__wadLVLogs = [];
         g.__wadLVOrig = g.__wadLVOrig || {};
-        var methods = ["log", "info", "warn", "error", "debug", "dir", "table", "trace"];
-        var ok = 0;
-        for (var i = 0; i < methods.length; i++) {
+        g.__wadLVEngineDepth = 0;
+
+        function buffer(m, args) {
+          if (!Array.isArray(g.__wadLVLogs)) return;
+          try {
+            var parts = [];
+            for (var j = 0; j < args.length && j < 15; j++) {
+              var v = args[j];
+              var t = typeof v;
+              var s = "";
+              if (v === null) s = "null";
+              else if (t === "string") s = v;
+              else if (t === "number" || t === "boolean" || t === "undefined") s = String(v);
+              else if (t === "function") s = "ƒ " + (v.name || "anonymous") + "()";
+              else if (v instanceof Error) s = (v.name || "Error") + ": " + v.message;
+              else {
+                try {
+                  var seen = [];
+                  s = JSON.stringify(v, function(k, val){
+                    if (typeof val === "object" && val !== null) {
+                      if (seen.indexOf(val) >= 0) return "[Circular]";
+                      seen.push(val);
+                    }
+                    return val;
+                  });
+                } catch (e) { s = String(v); }
+              }
+              if (s.length > 800) s = s.slice(0, 800) + "…";
+              parts.push(s);
+            }
+            var stack = "";
+            if (m === "error" || m === "warn") stack = (new Error()).stack || "";
+            g.__wadLVLogs.push({ level: m, at: Date.now(), text: parts.join(" "), stack: stack });
+            if (g.__wadLVLogs.length > 500) g.__wadLVLogs.shift();
+          } catch (e) {}
+        }
+
+        var consoleMethods = ["log", "info", "warn", "error", "debug", "dir", "table", "trace"];
+        var consoleOk = 0;
+        for (var i = 0; i < consoleMethods.length; i++) {
           (function(m){
             if (typeof console[m] !== "function") return;
             if (console[m].__wadLVBridge || console[m].__wadLogViewerWrapper) return;
             g.__wadLVOrig[m] = console[m];
             var w = function(){
-              try {
-                var parts = [];
-                for (var j = 0; j < arguments.length && j < 15; j++) {
-                  var v = arguments[j];
-                  var t = typeof v;
-                  var s = "";
-                  if (v === null) s = "null";
-                  else if (t === "string") s = v;
-                  else if (t === "number" || t === "boolean" || t === "undefined") s = String(v);
-                  else if (t === "function") s = "ƒ " + (v.name || "anonymous") + "()";
-                  else if (v instanceof Error) s = (v.name || "Error") + ": " + v.message;
-                  else {
-                    try {
-                      var seen = [];
-                      s = JSON.stringify(v, function(k, val){
-                        if (typeof val === "object" && val !== null) {
-                          if (seen.indexOf(val) >= 0) return "[Circular]";
-                          seen.push(val);
-                        }
-                        return val;
-                      });
-                    } catch (e) { s = String(v); }
-                  }
-                  if (s.length > 800) s = s.slice(0, 800) + "…";
-                  parts.push(s);
-                }
-                var stack = "";
-                if (m === "error" || m === "warn") stack = (new Error()).stack || "";
-                g.__wadLVLogs.push({ level: m, at: Date.now(), text: parts.join(" "), stack: stack });
-                if (g.__wadLVLogs.length > 500) g.__wadLVLogs.shift();
-              } catch (e) {}
+              if (!g.__wadLVEngineDepth) buffer(m, arguments);
               if (g.__wadLVOrig[m]) return g.__wadLVOrig[m].apply(this, arguments);
             };
             w.__wadLVBridge = true;
             try {
               Object.defineProperty(console, m, { value: w, configurable: true, writable: true });
-              ok++;
+              consoleOk++;
             } catch (e) {
-              try { console[m] = w; ok++; } catch (e2) {}
+              try { console[m] = w; consoleOk++; } catch (e2) {}
             }
-          })(methods[i]);
+          })(consoleMethods[i]);
         }
+
+        var engineOk = 0;
+        function wrapEngine(obj, methods) {
+          if (!obj) return;
+          for (var i = 0; i < methods.length; i++) {
+            (function(m){
+              var orig;
+              try { orig = obj[m]; } catch (e) { return; }
+              if (typeof orig !== "function") return;
+              if (orig.__wadLVEngine) return;
+              var w = function(){
+                if (!g.__wadLVEngineDepth) buffer(m, arguments);
+                g.__wadLVEngineDepth++;
+                try { return orig.apply(this, arguments); }
+                finally { g.__wadLVEngineDepth--; }
+              };
+              w.__wadLVEngine = true;
+              try {
+                Object.defineProperty(obj, m, { value: w, configurable: true, writable: true });
+                engineOk++;
+              } catch (e) {
+                try { obj[m] = w; engineOk++; } catch (e2) {}
+              }
+            })(methods[i]);
+          }
+        }
+        try {
+          var ccObj = (typeof cc !== "undefined" && cc) ? cc : (g && g.cc ? g.cc : null);
+          wrapEngine(ccObj, ["log", "warn", "error", "info", "debug"]);
+        } catch (e) {}
+        try {
+          var egretObj = (typeof egret !== "undefined" && egret) ? egret : (g && g.egret ? g.egret : null);
+          wrapEngine(egretObj, ["log", "warn", "error"]);
+        } catch (e) {}
+
         g.__wadLVGen = ` + GEN + `;
-        g.__wadLVPatched = "1.0.4";
-        return "patched:" + ok;
+        g.__wadLVPatched = "1.0.5";
+        return "patched:" + consoleOk + "+" + engineOk;
       })()`;
     }
 
@@ -2337,7 +2379,9 @@
                 logs: (g && g.__wadLVLogs) ? g.__wadLVLogs.length : 0,
                 engine: {
                   cc: typeof cc,
+                  ccOnGlobal: !!(g && g.cc),
                   egret: typeof egret,
+                  egretOnGlobal: !!(g && g.egret),
                   laya: typeof Laya,
                   realtimeLog: !!(typeof wx !== "undefined" && wx.getRealtimeLogManager)
                 }
@@ -2516,7 +2560,7 @@
   (function () {
     'use strict';
 
-    var VERSION = '1.0.4';
+    var VERSION = '1.0.5';
     var KEY = '__wadLogViewerRender__';
     var TOKEN = 'lvr-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
     var GEN = Date.now() * 1000 + Math.floor(Math.random() * 1000);
@@ -2895,7 +2939,7 @@
 
 如果客户端只支持远程 URL，用下面任意一个：
 
-- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.4/log-viewer.zip`
+- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.5/log-viewer.zip`
 - Raw zip：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.zip`
 - 单文件 HTML（无 vConsole）：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.html`
 
@@ -2928,6 +2972,7 @@ node verify.mjs  # Node mock 测试逻辑层/渲染层采集
 
 ## 版本
 
+1.0.5 — 增加 Cocos `cc.log` / Egret `egret.log` 引擎 logger 桥接，与 console 自动去重；探测增加 cc/egret 全局对象字段。
 1.0.4 — 桥接扩展为所有有 console 的 V8 上下文，探测上下文同时返回渲染层 page/targets/dom（web-view/canvas）。
 1.0.3 — 增加 console 自检、V8 上下文探测与 GameGlobal 小游戏 console 桥接，修复小游戏业务日志不在插件上下文时抓不到。
 1.0.2 — 增加逻辑层 hook 自愈与面板 3 秒轮询补拉，修复长时间运行后日志突然中断；面板过矮时整面板滚动。
