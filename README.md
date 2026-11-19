@@ -23,7 +23,7 @@
 
 如果客户端只支持远程 URL，用下面任意一个：
 
-- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.8/log-viewer.zip`
+- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.9/log-viewer.zip`
 - Raw zip：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.zip`
 - 单文件 HTML（无 vConsole）：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.html`
 
@@ -56,6 +56,7 @@ node verify.mjs  # Node mock 测试逻辑层/渲染层采集
 
 ## 版本
 
+1.0.9 — 逻辑层 bridge 请求 127.0.0.1:9400 失败时，自动改由面板层 wadPanelLayer.debugger 桥接游戏上下文。
 1.0.8 — debugger 不存在时也自动输出 [lv] bridge error · debugger unavailable。
 1.0.7 — 自动把桥接成功/失败原因打到日志列表（[lv] bridge），并把 render 不可用提示改成可读文案。
 1.0.6 — 自动在每个 V8 上下文打一条 console 探针并在面板输出 captured / NOT-captured；面板打开时自动记录 render 的 webView/canvas 状态。

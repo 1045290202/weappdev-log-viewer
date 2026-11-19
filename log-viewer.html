@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="wad:package" content="log-viewer">
   <meta name="wad:name" content="日志查看器">
-  <meta name="wad:version" content="1.0.8">
-  <meta name="wad:versionCode" content="9">
+  <meta name="wad:version" content="1.0.9">
+  <meta name="wad:versionCode" content="10">
   <meta name="wad:author" content="WeAppDev Plugin">
   <meta name="wad:description" content="捕获小程序/小游戏逻辑层与渲染层 console、未捕获异常、页面路由、网络摘要与 Storage 写入；支持过滤、搜索、复制、导出，并内置可选的 vConsole 视图。">
   <style>
@@ -888,6 +888,12 @@
         if (appid) els.app.textContent = appid;
         connected = true;
         setState('已连接', 'ok');
+        var bg = meta.gameBridge;
+        if (!pBridge.started && bg &&
+            !(bg.targets && bg.targets.length) &&
+            (bg.panelOwned || /request:fail|debugger unavailable|HOST_ERROR|error/i.test(bg.status || ''))) {
+          startPanelBridge();
+        }
         if (meta.hooks && meta.hooks.console === false) {
           try { await P.logicLayer.call('lv:rehook'); } catch (e2) {}
         }
@@ -1316,6 +1322,215 @@
       }
     }
 
+    var pBridge = {
+      started: false,
+      busy: false,
+      pollBusy: false,
+      probeBusy: false,
+      targets: [],
+      exprs: null,
+      timer: null,
+      pollTimer: null,
+      noticeKey: '',
+      probeKey: '',
+      lastError: '',
+      retry: 0
+    };
+
+    function pBridgeValue(r) {
+      if (r == null) return undefined;
+      if (typeof r !== 'object') return r;
+      if (Object.prototype.hasOwnProperty.call(r, 'value')) return r.value;
+      if (r.result && typeof r.result === 'object' && Object.prototype.hasOwnProperty.call(r.result, 'value')) {
+        return r.result.value;
+      }
+      if (Object.prototype.hasOwnProperty.call(r, 'result')) return r.result;
+      return r;
+    }
+
+    function pBridgeParse(v) {
+      if (typeof v === 'string') {
+        try { return JSON.parse(v); } catch (e) { return v; }
+      }
+      return v;
+    }
+
+    function pBridgeNotice(text, level) {
+      safe(function () { setFoot(text); });
+      safe(function () {
+        P.logicLayer.call('lv:ingest', [{
+          at: Date.now(),
+          level: level || 'info',
+          kind: 'session',
+          source: 'host',
+          page: 'panel-bridge',
+          text: text
+        }]);
+      });
+    }
+
+    async function startPanelBridge() {
+      if (pBridge.started) return;
+      pBridge.started = true;
+      var D = P.debugger;
+      if (!D) {
+        pBridgeNotice('[lv] panel bridge error · debugger unavailable', 'warn');
+        return;
+      }
+      pBridgeNotice('[lv] panel bridge starting…');
+      try {
+        await D.enable();
+      } catch (e) {
+        var msg = String(e && (e.code || e.message) || e);
+        pBridgeNotice('[lv] panel bridge error · ' + msg, 'warn');
+        if (pBridge.retry++ < 2) {
+          setTimeout(function () {
+            pBridge.started = false;
+            startPanelBridge();
+          }, 5000);
+        }
+        return;
+      }
+      try {
+        pBridge.exprs = await P.logicLayer.call('lv:bridgeExpr');
+      } catch (e) {
+        pBridgeNotice('[lv] panel bridge error · bridgeExpr ' + (e && (e.code || e.message) || e), 'warn');
+        return;
+      }
+      try { await P.logicLayer.call('lv:stopBridge'); } catch (e) {}
+      pBridge.timer = setInterval(panelBridgeDiscover, 3000);
+      pBridge.pollTimer = setInterval(panelBridgePoll, 1000);
+      panelBridgeDiscover();
+    }
+
+    async function panelBridgeDiscover() {
+      if (!pBridge.exprs || pBridge.busy) return;
+      pBridge.busy = true;
+      try {
+        var D = P.debugger;
+        var cs = await D.contexts();
+        var items = (cs && cs.items) || [];
+        var added = 0;
+        for (var i = 0; i < items.length; i++) {
+          var ctx = items[i];
+          var exists = false;
+          for (var k = 0; k < pBridge.targets.length; k++) {
+            if (pBridge.targets[k].id === ctx.id) { exists = true; break; }
+          }
+          if (exists) {
+            try { await D.evalGlobal(pBridge.exprs.patch, true, ctx.id); } catch (e) {}
+            continue;
+          }
+          try {
+            var info = pBridgeParse(pBridgeValue(await D.evalGlobal(pBridge.exprs.probe, true, ctx.id)));
+            if (!info || info.c === 'undefined') continue;
+            var pr = await D.evalGlobal(pBridge.exprs.patch, true, ctx.id);
+            pBridge.targets.push({
+              id: ctx.id,
+              name: ctx.name || String(ctx.id),
+              game: info.g === 'object',
+              status: String(pBridgeParse(pBridgeValue(pr)))
+            });
+            added++;
+          } catch (e) {}
+        }
+        if (pBridge.targets.length) {
+          var summary = pBridge.targets.map(function (t) {
+            return t.name + ':' + t.status;
+          }).join('; ').slice(0, 800);
+          if (summary !== pBridge.noticeKey) {
+            pBridge.noticeKey = summary;
+            pBridgeNotice('[lv] panel bridge · ' + summary);
+            setTimeout(panelBridgeProbe, 1500);
+          }
+        }
+      } catch (e) {
+        var msg2 = String(e && (e.code || e.message) || e);
+        if (msg2 !== pBridge.lastError) {
+          pBridge.lastError = msg2;
+          pBridgeNotice('[lv] panel bridge discover error · ' + msg2, 'warn');
+        }
+      } finally {
+        pBridge.busy = false;
+      }
+    }
+
+    async function panelBridgePoll() {
+      if (!pBridge.exprs || !pBridge.targets.length || pBridge.pollBusy) return;
+      pBridge.pollBusy = true;
+      try {
+        var D = P.debugger;
+        var targets = pBridge.targets.slice();
+        for (var i = 0; i < targets.length; i++) {
+          var t = targets[i];
+          try {
+            var r = await D.evalGlobal(pBridge.exprs.drain, true, t.id);
+            var arr = pBridgeParse(pBridgeValue(r));
+            if (arr && arr.length) {
+              var items = arr.map(function (it) {
+                return {
+                  at: it.at || Date.now(),
+                  level: it.level || 'log',
+                  kind: 'console',
+                  source: t.game ? 'game' : 'bridge',
+                  page: t.name,
+                  text: it.text || '',
+                  stack: it.stack
+                };
+              });
+              await P.logicLayer.call('lv:ingest', items);
+            }
+          } catch (e) {
+            pBridge.targets = pBridge.targets.filter(function (x) { return x.id !== t.id; });
+          }
+        }
+      } finally {
+        pBridge.pollBusy = false;
+      }
+    }
+
+    async function panelBridgeProbe() {
+      if (pBridge.probeBusy || !pBridge.targets.length) return;
+      var key = pBridge.targets.map(function (t) { return t.id; }).join(',');
+      if (key === pBridge.probeKey) return;
+      pBridge.probeKey = key;
+      pBridge.probeBusy = true;
+      try {
+        var D = P.debugger;
+        var tokens = [];
+        for (var i = 0; i < pBridge.targets.length; i++) {
+          var t = pBridge.targets[i];
+          var token = '__lv_probe_panel_' + t.id + '_' + Date.now().toString(36) + '__';
+          try {
+            await D.evalGlobal(
+              '(function(){try{console.log("' + token + '");return "ok";}catch(e){return "err:" + e;}})()',
+              true, t.id
+            );
+            tokens.push({ t: t, token: token });
+          } catch (e) {
+            tokens.push({ t: t, token: token, error: String(e && e.message || e) });
+          }
+        }
+        await new Promise(function (r) { setTimeout(r, 1800); });
+        var parts = [];
+        for (var j = 0; j < tokens.length; j++) {
+          var x = tokens[j];
+          if (x.error) {
+            parts.push(x.t.name + ' eval-error');
+            continue;
+          }
+          var hit = false;
+          for (var k = entries.length - 1; k >= 0; k--) {
+            if ((entries[k].text || '').indexOf(x.token) >= 0) { hit = true; break; }
+          }
+          parts.push(x.t.name + ' ' + (hit ? 'captured' : 'NOT-captured'));
+        }
+        pBridgeNotice('[lv] panel ctx probe · ' + parts.join(' · '));
+      } finally {
+        pBridge.probeBusy = false;
+      }
+    }
+
     function boot() {
       cacheEls();
       bindUI();
@@ -1336,6 +1551,14 @@
         });
         P.on('lv:batch', function (d) { onBatch(d); });
         P.on('lv:session', function (d) { onSession(d); });
+        if (typeof P.onClose === 'function') {
+          P.onClose(function () {
+            if (pBridge.timer) clearInterval(pBridge.timer);
+            if (pBridge.pollTimer) clearInterval(pBridge.pollTimer);
+            pBridge.timer = null;
+            pBridge.pollTimer = null;
+          });
+        }
 
         loadPrefs().then(function () {
           prefsReady = true;
@@ -1365,7 +1588,7 @@
   (function () {
     'use strict';
 
-    var VERSION = '1.0.8';
+    var VERSION = '1.0.9';
     var CONSOLE_KEY = '__wadLogViewerConsole__';
     var WX_ERR_KEY = '__wadLogViewerErrors__';
     var OPT_KEY = 'options';
@@ -1942,6 +2165,7 @@
     var gameBridgeDone = false;
     var lastGameBridgeStatus = '';
     var lastBridgeNotice = '';
+    var panelBridgeOwned = false;
     var bridgeProbeTimer = null;
     var bridgeProbeBusy = false;
     var lastBridgeProbeKey = '';
@@ -2078,7 +2302,7 @@
         } catch (e) {}
 
         g.__wadLVGen = ` + GEN + `;
-        g.__wadLVPatched = "1.0.8";
+        g.__wadLVPatched = "1.0.9";
         return "patched:" + consoleOk + "+" + engineOk;
       })()`;
     }
@@ -2160,6 +2384,7 @@
         }
         if (bridgeTargets.length) {
           gameBridgeAttempts = 0;
+          panelBridgeOwned = false;
           lastGameBridgeStatus = bridgeTargets.map(function (t) {
             return t.name + ':' + t.status;
           }).join('; ').slice(0, 800);
@@ -2300,6 +2525,7 @@
         gameBridgeDone = false;
         gameBridgeAttempts = 0;
         bridgeTargets = [];
+        panelBridgeOwned = false;
       }
       if (gameBridgeTimer || gameBridgeDone) return;
       gameBridgeTimer = setInterval(tryGameBridge, 3000);
@@ -2399,6 +2625,7 @@
           }),
           done: gameBridgeDone,
           attempts: gameBridgeAttempts,
+          panelOwned: panelBridgeOwned,
           status: lastGameBridgeStatus
         },
         lastError: lastError
@@ -2422,6 +2649,29 @@
       startSelfHeal();
       startGameBridge(true);
       return { ok: true, hooks: meta().hooks };
+    });
+
+    wadLogicLayer.register('lv:bridgeExpr', function () {
+      return {
+        patch: gamePatchExpr(),
+        drain: drainExpr(),
+        probe: '(function(){return {c:typeof console,g:typeof GameGlobal};})()'
+      };
+    });
+
+    wadLogicLayer.register('lv:stopBridge', function () {
+      stopGameBridgeTimers();
+      if (bridgeProbeTimer) {
+        clearTimeout(bridgeProbeTimer);
+        bridgeProbeTimer = null;
+      }
+      bridgeTargets = [];
+      gameBridgeDone = false;
+      gameBridgeAttempts = 0;
+      lastGameBridgeStatus = '';
+      lastBridgeNotice = '';
+      panelBridgeOwned = true;
+      return true;
     });
 
     wadLogicLayer.register('lv:selftest', function () {
@@ -2604,7 +2854,7 @@
       for (var i = 0; i < items.length; i++) {
         var it = items[i];
         if (!it || !it.text) continue;
-        push(it.level || 'log', it.kind || 'console', 'render', it.text, {
+        push(it.level || 'log', it.kind || 'console', it.source || 'render', it.text, {
           page: it.page,
           stack: it.stack,
           meta: it.meta
@@ -2696,7 +2946,7 @@
   (function () {
     'use strict';
 
-    var VERSION = '1.0.8';
+    var VERSION = '1.0.9';
     var KEY = '__wadLogViewerRender__';
     var TOKEN = 'lvr-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
     var GEN = Date.now() * 1000 + Math.floor(Math.random() * 1000);
@@ -3075,7 +3325,7 @@
 
 如果客户端只支持远程 URL，用下面任意一个：
 
-- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.8/log-viewer.zip`
+- Release zip（推荐）：`https://github.com/1045290202/weappdev-log-viewer/releases/download/v1.0.9/log-viewer.zip`
 - Raw zip：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.zip`
 - 单文件 HTML（无 vConsole）：`https://raw.githubusercontent.com/1045290202/weappdev-log-viewer/main/log-viewer.html`
 
@@ -3108,6 +3358,7 @@ node verify.mjs  # Node mock 测试逻辑层/渲染层采集
 
 ## 版本
 
+1.0.9 — 逻辑层 bridge 请求 127.0.0.1:9400 失败时，自动改由面板层 wadPanelLayer.debugger 桥接游戏上下文。
 1.0.8 — debugger 不存在时也自动输出 [lv] bridge error · debugger unavailable。
 1.0.7 — 自动把桥接成功/失败原因打到日志列表（[lv] bridge），并把 render 不可用提示改成可读文案。
 1.0.6 — 自动在每个 V8 上下文打一条 console 探针并在面板输出 captured / NOT-captured；面板打开时自动记录 render 的 webView/canvas 状态。

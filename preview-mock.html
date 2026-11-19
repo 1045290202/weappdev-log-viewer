@@ -29,6 +29,35 @@
       return function () {};
     },
     off: function () {},
+    onClose: function (fn) { return this.on('close', fn); },
+    onOpen: function (fn) { return this.on('open', fn); },
+    debugger: {
+      enable: function () { return Promise.resolve({ enabled: true }); },
+      contexts: function () {
+        return Promise.resolve({ items: [
+          { id: 1, name: 'MainContext' },
+          { id: 2, name: 'WxaSub', isDefault: true }
+        ] });
+      },
+      evalGlobal: function (expr, byValue, ctxId) {
+        if (expr && expr.indexOf('return {c:typeof console') >= 0) {
+          return Promise.resolve({ value: { c: 'object', g: ctxId === 2 ? 'object' : 'undefined' } });
+        }
+        if (expr && expr.indexOf('__wadLVPatched') >= 0) {
+          return Promise.resolve({ value: 'patched:' + (ctxId === 2 ? 8 : 0) });
+        }
+        if (expr && expr.indexOf('splice') >= 0) {
+          if (ctxId === 2 && !window.__mockPanelGameLog) {
+            window.__mockPanelGameLog = true;
+            return Promise.resolve({ value: [
+              { level: 'log', at: Date.now(), text: 'from-panel-bridge game log', stack: '' }
+            ] });
+          }
+          return Promise.resolve({ value: [] });
+        }
+        return Promise.resolve({ value: 'ok' });
+      }
+    },
     logicLayer: {
       call: function (name) {
         var args = Array.prototype.slice.call(arguments, 1);
@@ -38,7 +67,12 @@
             page: 'pages/index/index', attachedAt: Date.now(),
             oldestSeq: mockEntries.length ? mockEntries[0].seq : 0,
             newestSeq: seq, count: mockEntries.length, dropped: 0,
-            options: opts, hooks: { console: true, error: true }, lastError: ''
+            options: opts, hooks: { console: true, error: true },
+            gameBridge: {
+              targets: [], done: false, attempts: 5,
+              status: 'error: request:fail Url "http://127.0.0.1:9400/v1/debugger/enable?ignore_wmpf_network_debug=1"'
+            },
+            lastError: ''
           });
         }
         if (name === 'lv:fetch') {
@@ -92,13 +126,21 @@
             ]
           });
         }
+        if (name === 'lv:bridgeExpr') {
+          return Promise.resolve({
+            patch: 'PATCH __wadLVPatched methods',
+            drain: 'DRAIN splice __wadLVLogs',
+            probe: 'return {c:typeof console,g:typeof GameGlobal}'
+          });
+        }
+        if (name === 'lv:stopBridge') return Promise.resolve(true);
         if (name === 'lv:ingest') {
           var incoming = args[0] || [];
           var added = incoming.map(function (it) {
             seq++;
             return {
               seq: seq, at: it.at || Date.now(), level: it.level || 'log',
-              kind: it.kind || 'console', source: 'render',
+              kind: it.kind || 'console', source: it.source || 'render',
               page: it.page || '', text: it.text || '', stack: it.stack
             };
           });
